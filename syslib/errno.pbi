@@ -151,7 +151,8 @@ EnableExplicit
 
 ; ----- System libraries ------------------------------------------------------
 
-Prototype.i pPERROR(s.s)
+; TODO: This is more properly in stdio.h
+Prototype pPERROR(i.i)
 Global fPERROR.pPERROR
 
 ; ----- System library function wrappers --------------------------------------
@@ -170,8 +171,8 @@ Procedure.i fERRNO()
   !extern int errno;
   !v_error=errno;
   !errno=0;
-  procedurereturn error
-endprocedure
+  ProcedureReturn error
+EndProcedure
 
 ; ----- Resolve function address ----------------------------------------------
 
@@ -180,12 +181,12 @@ Procedure GetLibcErrno()
     fPERROR = GetFunction(0, "perror")
   Else 
     PrintN("Error on open library libc! for perror") 
-    End 
+    End fERRNO()
   Endif 
 
   If fPERROR = 0
     PrintN("Error retrieving function perror from libc")
-    End
+    End fERRNO()
   Endif
 
   CloseLibrary(0)

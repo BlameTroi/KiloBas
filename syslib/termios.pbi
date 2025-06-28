@@ -310,11 +310,13 @@ Prototype.i pTCGETATTR(filedes.i, *termios.sTERMIOS)
 Prototype.i pTCSETATTR(filedes.i, optional_actions.i, *termios.sTERMIOS)
 Prototype.i pISCNTRL(c.i)
 Prototype.i pREAD(filedes.i, *c.PB_BUFFER, len.i)
+Prototype.i pWRITE(filedes.i, *c.PB_BUFFER, len.i)
 
 Global fTCGETATTR.pTCGETATTR
 Global fTCSETATTR.pTCSETATTR
 Global fISCNTRL.pISCNTRL
 Global fREAD.pREAD
+Global fWRITE.pWRITE
 
 ; ----- Utility functions -----------------------------------------------------
 
@@ -345,16 +347,18 @@ Procedure GetLibcTermios()
     fTCSETATTR = GetFunction(0, "tcsetattr")
     fISCNTRL = GetFunction(0, "iscntrl")
     fREAD = GetFunction(0, "read")
+    fWRITE = GetFunction(0, "write")
   Else
     PrintN("Error on open library libc!")
     End
   Endif
-  If fTCGETATTR = 0 OR fTCSETATTR = 0 OR fISCNTRL = 0 OR fREAD = 0 OR fPERROR = 0
+  If fTCGETATTR = 0 OR fTCSETATTR = 0 OR fISCNTRL = 0 OR fREAD = 0 OR fWRITE = 0
     PrintN("Error retrieving one or more functions")
     PrintN("fTCGETATTR = " + hex(fTCGETATTR))
     PrintN("fTCSETATTR = " + hex(fTCSETATTR))
     PrintN("fISCNTRL = " + hex(fISCNTRL))
     PrintN("fREAD = " + hex(fREAD))
+    PrintN("fWRITE = " + hex(fWRITE))
     End
   Endif
   CloseLibrary(0)
