@@ -25,7 +25,8 @@ XIncludeFile "syslib/errno.pbi"
 XIncludeFile "syslib/termios.pbi"
 ; XIncludeFile "stdio.h"
 ; XIncludeFile "stdlib.h"
-; XIncludeFile "unistd.h"
+XIncludeFile "syslib/unistd.pbi"
+XIncludeFile "syslib/vt100.pbi"
 
 ; ----- Macros (I wish) -------------------------------------------------------
 
@@ -38,12 +39,14 @@ XIncludeFile "syslib/termios.pbi"
 ; a PureBasic constant, I regard it as constant.
 
 Global CTRL_Q.a = Asc("q") & $1f
+Global CTRL_S.a = Asc("s") & $1f
+Global CTRL_F.a = Asc("f") & $1f
 
-; ----- I don't want to keep it, but for now globa data -----------------------
+; ----- I don't want to keep these as global, but will for now ----------------
 
 Global retval.i
-Global orig.sTERMIOS
-Global raw.sTERMIOS
+Global orig.tTERMIOS
+Global raw.tTERMIOS
 
 ; ----- Forward declaration of procedures -------------------------------------
 
@@ -57,6 +60,8 @@ Global raw.sTERMIOS
 ; Common failure exit
 
 Procedure die(s.s)
+  VT100_ERASE_SCREEN()
+  VT100_HOME_CURSOR()
   PrintN("!Abort! " + s)
   End -1
 EndProcedure
@@ -105,13 +110,25 @@ EndProcedure
 ; ----- System libraries ------------------------------------------------------
 ; ----- System libraries ------------------------------------------------------
 ; ----- System libraries ------------------------------------------------------
-; ----- System libraries ------------------------------------------------------
+; ----- Display rows on the screen --------------------------------------------
+
+
+Procedure EditorDrawRows()
+  Define y.i, x.i
+  Define r.i = -1
+  For y = 0 To 23
+    r = fWRITES(1, ~"~\r\n", 3) ; this is likely wrong
+    ; oddly, it wasn't.
+  Next y
+  ; r is 4 but I think it should be 3. confusing, but it works. I need to keep
+  ; an eye out for this.
+EndProcedure
 
 ; ----- Read a keypress and return it one byte at a time ----------------------
 
 Procedure.a EditorReadKey()
   Define n.i
-  Define buf.PB_BUFFER
+  Define buf.tTCBUFFER
   ; On MacOS read doesn't mark no input as a hard error so check for nothing
   ; read and handle as if we got an error return flagged #EAGAIN
   Repeat
@@ -142,12 +159,9 @@ EndProcedure
 ; ----- Clear and repaint the screen ------------------------------------------
 
 Procedure EditorRefreshScreen()
-  Define buf.PB_BUFFER
-  buf\c[0] = 27
-  buf\c[1] = Asc("[")
-  buf\c[2] = Asc("2")
-  buf\c[3] = Asc("J")
-  fWRITE(1, buf, 4)
+  VT100_ERASE_SCREEN()
+  VT100_HOME_CURSOR()
+  EditorDrawRows()
 EndProcedure
 
 ; ----- Mainline driver -------------------------------------------------------

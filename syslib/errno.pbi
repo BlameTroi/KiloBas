@@ -152,8 +152,9 @@ EnableExplicit
 ; ----- System libraries ------------------------------------------------------
 
 ; TODO: This is more properly in stdio.h
-Prototype pPERROR(i.i)
-Global fPERROR.pPERROR
+Prototype _pPERROR(i.i)
+Global fPERROR._pPERROR
+Global LAST_ERRNO.i = 0
 
 ; ----- System library function wrappers --------------------------------------
 
@@ -171,12 +172,13 @@ Procedure.i fERRNO()
   !extern int errno;
   !v_error=errno;
   !errno=0;
+  LAST_ERRNO = error
   ProcedureReturn error
 EndProcedure
 
 ; ----- Resolve function address ----------------------------------------------
 
-Procedure GetLibcErrno()
+Procedure _ERRNO_INITIALIZE()
   If OpenLibrary(0, "libc.dylib")  
     fPERROR = GetFunction(0, "perror")
   Else 
@@ -192,7 +194,6 @@ Procedure GetLibcErrno()
   CloseLibrary(0)
 EndProcedure
 
-GetLibcErrno()
+_ERRNO_INITIALIZE()
 
 ; errno.pbi ends here ---------------------------------------------------------
-

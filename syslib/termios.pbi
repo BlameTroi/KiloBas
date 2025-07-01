@@ -4,6 +4,9 @@
 
 EnableExplicit
 
+XIncludeFile "unistd.pbi"
+XIncludeFile "errno.pbi"
+
 ; ----- Definitions from <sys/termios.h> --------------------------------------
 
 ; There are some preprocessor checks that appear to remove some of these. I am
@@ -14,6 +17,7 @@ EnableExplicit
 ;
 ; Some coding notes:
 ;
+; - Private entities are prefixed with "_".
 ; - Remember that hex notation for PureBasic is $xxxxxx.
 ; - I'm not trying to be portable. This is for 64 bit MacOS code. It will
 ;   probably run on Linux but I don't expect do so.
@@ -81,53 +85,9 @@ EnableExplicit
 
 ; ----- Unimplemented features --------------------------------------------------
 
-; Leaving these in as comments ...
-;  * The following block of features is unimplemented.  Use of these flags in
-;  * programs will currently result in unexpected behaviour.
-;  *
-;  * - Begin unimplemented features
-; #OCRNL           = $0000010      ; map CR to NL on output
-; #ONOCR           = $0000020      ; no CR output at column 0
-; #ONLRET          = $0000040      ; NL performs CR function
-; #OFILL           = $0000080      ; use fill characters for delay
-; #NLDLY           = $0000300      ; \n delay
-; #TABDLY          = $0000c04      ; horizontal tab delay
-; #CRDLY           = $0003000      ; \r delay
-; #FFDLY           = $0004000      ; form feed delay
-; #BSDLY           = $0008000      ; \b delay
-; #VTDLY           = $0010000      ; vertical tab delay
-; #OFDEL           = $0020000      ; fill is DEL, else NUL
-;
-;  * These manifest constants have the same names as those in the header
-;  * <sys/ioctl_compat.h>, so you are not permitted to have both definitions
-;  * in scope simultaneously in the same compilation unit.  Nevertheless,
-;  * they are required to be in scope when _POSIX_C_SOURCE is requested;
-;  * this means that including the <sys/ioctl_compat.h> header before this
-;  * one when _POSIX_C_SOURCE is in scope will result in redefintions.  We
-;  * attempt to maintain these as the same values so as to avoid this being
-;  * an outright error in most compilers.
-;
-; #        NL0     = $0000000
-; #        NL1     = $0000100
-; #        NL2     = $0000200
-; #        NL3     = $0000300
-; #        TAB0    = $0000000
-; #        TAB1    = $0000400
-; #        TAB2    = $0000800
-; not in sys/ioctl_compat.h, use OXTABS value
-; #        TAB3    = $0000004
-; #        CR0     = $0000000
-; #        CR1     = $0001000
-; #        CR2     = $0002000
-; #        CR3     = $0003000
-; #        FF0     = $0000000
-; #        FF1     = $0004000
-; #        BS0     = $0000000
-; #        BS1     = $0008000
-; #        VT0     = $0000000
-; #        VT1     = $0010000
-;
-; * + End unimplemented features
+; Here there was a block of code marked as "unimplemented features." I am not
+; pulling those in. If they were used, the "programs will currently result in
+; unexpected behaviour.
 
 ; ----- Control flags - hardware control of terminal ----------------------------
 
@@ -185,10 +145,10 @@ EnableExplicit
 ;
 ; The c definition ends after c_ospeed. I originally had some pad bytes after
 ; but the nature of the structure is such that they should not be needed.
-; NOTE: for some reason I had c_i/ospeed as pointers to sTERMIOS. I am not
+; NOTE: for some reason I had c_i/ospeed as pointers to tTERMIOS. I am not
 ; sure why I did that.
 
-Structure sTERMIOS
+Structure tTERMIOS
   c_iflag.i                      ; input flags
   c_oflag.i                      ; output flags
   c_cflag.i                      ; control flags
@@ -197,7 +157,6 @@ Structure sTERMIOS
   c_ispeed.i                     ; input speed
   c_ospeed.i                     ; output speed
 EndStructure
-
 
 ; ----- Commands passed to tcsetattr() for setting the termios structure --------
 
@@ -242,10 +201,10 @@ EndStructure
 #TCIOFF        = 3
 #TCION         = 4
 
-; Not all of these have PureBasic wrappers yet.
-; #include <sys/cdefs.h>
+; ----- System library function definitions -----------------------------------
+
+; These are not exposed yet, I'm not sure they will ever be needed.
 ;
-; __BEGIN_DECLS
 ; speed_t cfgetispeed(const struct termios *);
 ; speed_t cfgetospeed(const struct termios *);
 ; int     cfsetispeed(struct termios *, speed_t);
@@ -256,74 +215,24 @@ EndStructure
 ; int     tcflow(int, int);
 ; int     tcflush(int, int);
 ; int     tcsendbreak(int, int);
-;
-; #if !defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)
 ; void    cfmakeraw(struct termios *);
 ; int     cfsetspeed(struct termios *, speed_t);
-; #endif ; (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE)
-; __END_DECLS
-;
-
-; Not done, doesn't seem needed.
-;  * Include tty ioctl's that aren't just for backwards compatibility
-;  * with the old tty driver.  These ioctl definitions were previously
-;  * in <sys/ioctl.h>.
-;
-; #include <sys/ttycom.h>
-; #include <sys/ttydefaults.h>
-
-
-; ------- mainline -----------------------------------------------------------
-; Switches and flagging masks.
-; All from sys/termios.h
-; #ICANON    = $00000100
-; #ECHO      = $00000008
-; #TCSAFLUSH = 2
-; #IXON      = $00000200
-; #ISIG      = $00000080
-; #IEXTEN    = $00000400
-; #INLCR     = $00000040
-; #ICRNL     = $00000100
-; #OPOST     = $00000001
-; #INPCK     = $00000010
-; #ISTRIP    = $00000020
-; #BRKINT    = $00000002
-; #CS8       = $00000300
-
-; These are indices into C_CC.
-; #VMIN      = 16
-; #VTIME     = 17
-
-XIncludeFile "errno.pbi"
-
-; As strings in PureBasic use two bytes per character, I'm allocating a 256
-; byte buffer of ascii (.a) which is basically an unsigned very short integer.
-
-Structure PB_BUFFER
-  c.a[256]
-endstructure
-
-; ----- System library function definitions -----------------------------------
-
 ; pid_t tcgetsid(int);
-Prototype.i pTCGETATTR(filedes.i, *termios.sTERMIOS)
-Prototype.i pTCSETATTR(filedes.i, optional_actions.i, *termios.sTERMIOS)
-Prototype.i pISCNTRL(c.i)
-Prototype.i pREAD(filedes.i, *c.PB_BUFFER, len.i)
-Prototype.i pWRITE(filedes.i, *c.PB_BUFFER, len.i)
 
-Global fTCGETATTR.pTCGETATTR
-Global fTCSETATTR.pTCSETATTR
-Global fISCNTRL.pISCNTRL
-Global fREAD.pREAD
-Global fWRITE.pWRITE
+Prototype.i _pTCGETATTR(filedes.i, *termios.tTERMIOS)
+Prototype.i _pTCSETATTR(filedes.i, optional_actions.i, *termios.tTERMIOS)
+Prototype.i _pISCNTRL(c.i)
+
+Global fTCGETATTR._pTCGETATTR
+Global fTCSETATTR._pTCSETATTR
+Global fISCNTRL._pISCNTRL
 
 ; ----- Utility functions -----------------------------------------------------
 
 ; Display TERMIOS for analysis. Note: Today I learned that structures are
 ; passed by reference.
 
-Procedure DumpTERMIOS(*t.sTERMIOS, tag.s="")
+Procedure TERMIOS_dump(*t.tTERMIOS, tag.s="")
   PrintN("TERMIOS: " + tag)
   PrintN("  c_iflag = " + hex(*t\c_iflag))
   PrintN("  c_oflag = " + hex(*t\c_oflag))
@@ -341,29 +250,25 @@ EndProcedure
 
 ; ------- Resolve function addresses ------------------------------------------
 
-Procedure GetLibcTermios()
+Procedure _TERMIOS_INITIALIZE()
   If OpenLibrary(0, "libc.dylib")
-    fTCGETATTR.pTCGETATTR = GetFunction(0, "tcgetattr")
+    fTCGETATTR = GetFunction(0, "tcgetattr")
     fTCSETATTR = GetFunction(0, "tcsetattr")
     fISCNTRL = GetFunction(0, "iscntrl")
-    fREAD = GetFunction(0, "read")
-    fWRITE = GetFunction(0, "write")
   Else
     PrintN("Error on open library libc!")
     End
   Endif
-  If fTCGETATTR = 0 OR fTCSETATTR = 0 OR fISCNTRL = 0 OR fREAD = 0 OR fWRITE = 0
+  If fTCGETATTR = 0 OR fTCSETATTR = 0 OR fISCNTRL = 0
     PrintN("Error retrieving one or more functions")
     PrintN("fTCGETATTR = " + hex(fTCGETATTR))
     PrintN("fTCSETATTR = " + hex(fTCSETATTR))
     PrintN("fISCNTRL = " + hex(fISCNTRL))
-    PrintN("fREAD = " + hex(fREAD))
-    PrintN("fWRITE = " + hex(fWRITE))
     End
   Endif
   CloseLibrary(0)
 EndProcedure
 
-GetLibcTermios()
+_TERMIOS_INITIALIZE()
 
 ; termios.pbi ends here ------------------------------------------------------
