@@ -112,7 +112,6 @@ EndProcedure
 ; ----- System libraries ------------------------------------------------------
 ; ----- Display rows on the screen --------------------------------------------
 
-
 Procedure EditorDrawRows()
   Define y.i, x.i
   Define r.i = -1
@@ -128,11 +127,11 @@ EndProcedure
 
 Procedure.a EditorReadKey()
   Define n.i
-  Define buf.tTCBUFFER
+  Define c.a
   ; On MacOS read doesn't mark no input as a hard error so check for nothing
   ; read and handle as if we got an error return flagged #EAGAIN
   Repeat
-    n = fREAD(0, buf, 1)
+    n = fREAD(0, @c, 1)
     If n = -1
       Define e.i = fERRNO()
       If e <> #EAGAIN
@@ -142,7 +141,7 @@ Procedure.a EditorReadKey()
       Endif
     Endif
   Until n <> 0
-  ProcedureReturn buf\c[0]
+  ProcedureReturn c
 EndProcedure
 
 ; ----- Handle keypress -------------------------------------------------------
@@ -162,6 +161,9 @@ Procedure EditorRefreshScreen()
   VT100_ERASE_SCREEN()
   VT100_HOME_CURSOR()
   EditorDrawRows()
+  VT100_HOME_CURSOR()
+  Define coord.tVT100_COORD_PAIR
+  VT100_GET_CURSOR_POSITION(@coord)
 EndProcedure
 
 ; ----- Mainline driver -------------------------------------------------------

@@ -133,10 +133,31 @@ Procedure.i _VT100_WRITE_NO_RESPONSE(*cmd._tVT100_SEQUENCE)
   ProcedureReturn sent.i
 EndProcedure
 
+; Sends a request and reads the response into the supplied buffer. Return is -1 for
+; an error, 0 is probably an error (no response), and a positive number is the number
+; of bytes in the response.
+
 Procedure.i _VT100_WRITE_AND_RESPONSE(*cmd._tVT100_SEQUENCE, *buf.tTCBUFFER, maxlen.i)
   Define sent.i = fWRITE(1, *cmd, *cmd\len)
-  ; more to do here
-  End -1
+  If *cmd\len <> sent
+    PrintN("Error on write and response -- write")
+    ProcedureReturn -1
+  EndIf
+  FillMemory(*buf, maxlen, 0, #PB_ASCII)
+  ; The expectation here is the whole response is available and when we do not
+  ; get a character on a read, we have reached the end of the response.
+
+  Define c.a
+  Define i.i
+  While fREAD(0, @c, 1) = 1
+    *buf\c[i] = c
+    i = i + 1
+    if i >= maxlen
+      PrintN("Buffer overflow on write and response -- read")
+      ProcedureReturn -1
+    EndIf
+  Wend
+  ProcedureReturn i
 EndProcedure
 
 ; ----- Higher level requests -------------------------------------------------
@@ -161,12 +182,69 @@ EndProcedure
 ; 3 	Response from VT100 – Malfunction – retry 
 ; 5 	Command from host – Please report status (using a DSR control sequence) 
 ; 6 	Command from host – Please report active position (using a CPR control sequence) 
-
+; int getCursorPosition(int *rows, int *cols) { 
+;   char buf[32]; 
+;   unsigned int i = 0; 
+;   if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1; 
+;   while (i < sizeof(buf) - 1) { 
+;     if (read(STDIN_FILENO, &buf[i], 1) != 1) break; 
+;     if (buf[i] == 'R') break; 
+;     i++; 
+;   } 
+;   buf[i] = '\0'; 
+;   printf("\r\n&buf[1]: '%s'\r\n", &buf[1]); 
+;   editorReadKey(); 
+;   return -1; 
+; } 
 ; Not implemented.
-Procedure.i VT100_GET_CURSOR_POSITION(*res.tVT100_COORD_PAIR)
-  ProcedureReturn -1
+
+Procedure.i VT100_GET_CURSOR_POSITION(*coord.tVT100_COORD_PAIR)
+  _VT100_WRITE_NO_RESPONSE(_VT100_CURSOR_DOWN_MAX)
+  _VT100_WRITE_NO_RESPONSE(_VT100_CURSOR_FORWARD_MAX)
+
+  Define *resp = AllocateMemory(64)
+  If NOT *resp
+    PrintN("FATAL: VT100_GET_CURSOR_POSITION could not allocate response buffer.")
+    End -1
+  EndIf
+  FillMemory(*resp, 64, 0, #PB_ASCII)
+
+  Define len.i = _VT100_WRITE_AND_RESPONSE(_VT100_GET_CURSOR_POS, *resp, 63)
+  If len < 1
+    PrintN("Error in get cursor position")
+    ProcedureReturn -1
+  EndIf
+
+  *coord\x = 0
+  *coord\y = 0
+
+  ; Rehome to not hork the display
+  VT100_HOME_CURSOR()
+  Print(~"\n\r")
+  Define i.i = 0
+  Define *p = *resp
+  While PeekA(*p)
+    Define c.a = PeekA(*p)
+    Print(Str(i) + ":" + Hex(c) + ":")
+    If fISCNTRL(c)
+      Print(".")
+    Else
+      Print(Chr(c))
+    EndIf
+    Print(~"\n\r")
+    *p = *p + 1
+  Wend
+
+  ProcedureReturn 0
 EndProcedure
 
+; ESC [ Pn ; Pn R 	default value: 1 
+;
+; The CPR sequence reports the active position by means of the parameters. This sequence has two parameter values, the first specifying the line and the second specifying the column. The default condition with no parameters present, or parameters of 0, is equivalent to a cursor at home position. 
+;
+; The numbering of lines depends on the state of the Origin Mode (DECOM). 
+;_
+; This control sequence is solicited by a device status report (DSR) sent from the host. 
 ; From cursor to end of line 	ESC [ K or ESC [ 0 K 
 ; From beginning of line to cursor 	ESC [ 1 K 
 ; Entire line containing cursor 	ESC [ 2 K 

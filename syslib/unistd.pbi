@@ -42,6 +42,22 @@ EnableExplicit
 ; Where an argument is flagged as const in the C header, I uppercase its
 ; placeholder variable name.
 
+; Found this on GitHub and it's a good use case for macros. I should probably redo these
+; prototypes.
+;
+;{ from /usr/include/x86_64-linux-gnu/bits/types.h and /usr/include/x86_64-linux-gnu/bits/typesizes.h
+; Macro dev_t : q : EndMacro 
+; Macro ino_t : i : EndMacro 
+; Macro mode_t : l : EndMacro 
+; Macro nlink_t : q : EndMacro 
+; Macro uid_t : l : EndMacro 
+; Macro gid_t : l : EndMacro 
+; Macro off_t : i : EndMacro 
+; Macro blksize_t : i : EndMacro 
+; Macro blkcnt_t : i : EndMacro 
+; Macro time_t : i : EndMacro 
+; Macro size_t : i : EndMacro 
+
 ; As strings in PureBasic use two bytes per character, I'm allocating a byte
 ; buffer of ascii (.a) which is basically an unsigned very short integer. I picked
 ; 2048 as the size as this is the value of LINE_MAX in syslimits.h on my system.
