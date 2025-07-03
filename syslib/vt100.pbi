@@ -2,13 +2,13 @@
 
 ; work in progress
 
+EnableExplicit
+
 ; I'm borrowing the idea of prefixing "system" or "internal" names with an
 ; underscore. Items named thusly should not be accessed outside their include
 ; file.
 
 XIncludeFile "unistd.pbi"
-
-EnableExplicit
 
 ; ----- VT100 Support Structures ----------------------------------------------
 
@@ -130,7 +130,7 @@ EndProcedure
 Procedure.i _VT100_WRITE_NO_RESPONSE(*cmd._tVT100_SEQUENCE)
   Define sent.i = fWRITE(1, *cmd, *cmd\len)
   ; could add error code here
-  ProcedureReturn sent.i
+  ProcedureReturn sent
 EndProcedure
 
 ; Sends a request and reads the response into the supplied buffer. Return is -1 for
@@ -162,15 +162,67 @@ EndProcedure
 
 ; ----- Higher level requests -------------------------------------------------
 
-; The procedure return for all of these is 0 for success and anything else for
-; an error. I know that's backwards from booleans but it makes sense to me.
+; These return #true for success and #false for failure.
 
-Procedure.i VT100_HOME_CURSOR()
-  ProcedureReturn _VT100_WRITE_NO_RESPONSE(@_VT100_CURSOR_HOME) - _VT100_CURSOR_HOME\len
+; Write a single character to the terminal.
+
+Procedure.i VT100_WRITE_CHARACTER(c.a)
+  Define t.a = c
+  Define sent.i = fWRITE(1, @t, 1)
+  If sent = 1
+    ProcedureReturn #true
+  EndIf
+  ; Could do error handling here
+  ProcedureReturn #false
 EndProcedure
 
+; Write a PureBasic string to the terminal. I'm not trusting that all characters will be
+; 8 bit. This is probably wasted effort.
+
+Procedure.i VT100_WRITE_STRING(s.s)
+  Define *buf = AllocateMemory(Len(s) + 8)
+  Define i.i = 0
+  Define *ptr = *buf
+  For i = 1 To Len(s)
+    PokeA(*ptr, Asc(Mid(s, i, 1)))
+    *ptr = *ptr + 1
+  Next i
+  Define sent.i = fWRITE(1, *buf, Len(s))
+  Define err.i = fERRNO()
+  FreeMemory(*buf)
+  If sent = Len(s)
+    ProcedureReturn #true
+  EndIf
+  ; Could do error handling here
+  ProcedureReturn #false
+EndProcedure
+
+; Home the cursor, does not erase screen.
+
+Procedure.i VT100_HOME_CURSOR()
+  Define sent.i = _VT100_WRITE_NO_RESPONSE(@_VT100_CURSOR_HOME)
+  If sent = _VT100_CURSOR_HOME\len
+    ProcedureReturn #true
+  EndIf
+  ; Could do error handling here
+  ProcedureReturn #false
+EndProcedure
+
+; Erases the entire screen, do not move cursor.
+
 Procedure.i VT100_ERASE_SCREEN()
-  ProcedureReturn _VT100_WRITE_NO_RESPONSE(@_VT100_ERASE_ENTIRE_SCREEN) - _VT100_ERASE_ENTIRE_SCREEN\len
+  Define sent.i = _VT100_WRITE_NO_RESPONSE(@_VT100_ERASE_ENTIRE_SCREEN)
+  If sent = _VT100_ERASE_ENTIRE_SCREEN\len
+    ProcedureReturn #true
+  EndIf
+  ; Could do error handling here
+  ProcedureReturn #false
+EndProcedure
+
+; CRLF needed instead of just LF when in raw mode.
+
+Procedure.i VT100_CRLF()
+  ProcedureReturn VT100_WRITE_STRING(~"\r\n")
 EndProcedure
 
 ; DSR – Device Status Report 

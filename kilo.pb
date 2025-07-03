@@ -1,48 +1,116 @@
 ; kilo.pb -- a PureBasic walkthrough of the kilo.c "editor in 1k lines" tutorial
 
-; work in progress.
-
 EnableExplicit
 
-; ----- System libraries ------------------------------------------------------
-;
-; While I think everything used comes out of libc, I'm thinking the best
-; approach is to have separate include files for each section. There will be
-; redundancy, but i'll manage. Things to consider include lazy initialization
-; and better error reporting.
-;
-; Use `XIncludeFile` to include each file only once. I don't know where I'm
-; going to put common library code yet, but once I figure that out the
-; directory is indicated by an in source `IncludePath "path"` and not a
-; compiler command line option.
-;
-; For now, functions are resolved from top to bottom in this file with no
-; concern for startup time. 
+; work in progress.
 
-; IncludePath ""
-; XIncludeFile ctype.pbi
+; ----- Motivation and overview -----------------------------------------------
+;
+; * Project description:
+;
+; The kilo.c editor is a minimal vi like editor written in roughly 1,000 lines
+; of code. There is also a walk through of a possible development path using C.
+; This is an exercise to use kilo as a springboard into PureBasic programming
+; at a non-GUI level.
+;
+; Having a stable reference code base provides structure as I learn to make
+; system calls and write larger programs in PureBasic.
+;
+; * System calls:
+;
+; PureBasic has functions that can replace many raw system library functions.
+; Examples include `AllocateMemory` for `malloc` and `CopyMemory` for `memcpy`.
+;
+; For functions that don't have PureBasic analogs--or those I haven't found
+; yet--PureBasic provides an excellent interface to C code.
+;
+; So far everything I have needed is found in `libc`, which is `libc.dylib`
+; on MacOS.
+;
+; I'm creating PureBasic Includes (*.pbi) for system functions that I need now
+; or might want in the future. These parallel the standard C include files. The
+; PureBasic `XIncludeFile` directive includes a file only once, so there is no
+; need for pragmas or header guard checks.
+;
+; There are redundancies and inefficiencies in these includes, but they are
+; confined to program initialization. If this becomes an issue, it will be
+; fixed later.
+;
+; * Assumptions and limitations:
+;
+; This code is by me and for my use only. There are no OS or Compiler version
+; checks in either the main project or in the common library includes.
+;
+; This is running on a MacOS desktop in 2025.
+
+; ----- Bugs, notes, and quirks -----------------------------------------------
+;
+; * The tutorial suggested piping data on stdin as a way to force an error
+;   return from get and set attr. On MacOS this results in a segmentation
+;   fault. I could check on the device using `istty` but that isn't really
+;   needed.
+;
+; * PureBasic has limited unsigned integer support. This shouldn't be a problem
+;   as I don't do any arithmetic beyond pointer increment or decrement, and I
+;   expect user memory to be well under the dividing line for positive and
+;   negative numbers.
+
+; ----- Include system library interfaces -------------------------------------
+;
+; I'm unclear on how to best set the include path. Here I'm assuming that
+; the libraries are in a subdirectory of this project. When these reference each
+; other they do not specify a directory. This works as I want it to so I'm
+; not planning to use `IncludePath`.
+; files do not mentioned the subdirectory.
+
+; XIncludeFile "syslib/ctype.pbi" ; not yet implemented
 XIncludeFile "syslib/errno.pbi"
 XIncludeFile "syslib/termios.pbi"
-; XIncludeFile "stdio.h"
-; XIncludeFile "stdlib.h"
+; XIncludeFile "syslib/stdio.h" ; not yet implemented
+; XIncludeFile "syslib/stdlib.h" ; not yet implemented
 XIncludeFile "syslib/unistd.pbi"
 XIncludeFile "syslib/vt100.pbi"
 
-; ----- Macros (I wish) -------------------------------------------------------
-
-; Macros in PureBasic don't appear to be as flexible as C preprocessor macros. I
-; will just define the constants that I would normally define with a macro. This
-; may become an include.
+; ----- Keypress and response mapping -----------------------------------------
 ;
-; I can't use a function so the readability of this approach is poor. I'll switch
-; to global variables. The convention of uppercase names means that while it isn't
-; a PureBasic constant, I regard it as constant.
+; I couldn't come up with a better way to generate the control keys so
+; enumeration it is.
+;
+; TODO: Move to a separate include file.
 
-Global CTRL_Q.a = Asc("q") & $1f
-Global CTRL_S.a = Asc("s") & $1f
-Global CTRL_F.a = Asc("f") & $1f
+Enumeration CONTROL_KEYS 1 Step 1
+  #CTRL_A
+  #CTRL_B
+  #CTRL_C
+  #CTRL_D
+  #CTRL_E
+  #CTRL_F
+  #CTRL_G
+  #CTRL_H
+  #CTRL_I
+  #CTRL_J
+  #CTRL_K
+  #CTRL_L
+  #CTRL_M
+  #CTRL_N
+  #CTRL_O
+  #CTRL_P
+  #CTRL_Q
+  #CTRL_R
+  #CTRL_S
+  #CTRL_T
+  #CTRL_U
+  #CTRL_V
+  #CTRL_W
+  #CTRL_X
+  #CTRL_Y
+  #CTRL_Z
+EndEnumeration
 
-; ----- I don't want to keep these as global, but will for now ----------------
+; ----- Common or global data -------------------------------------------------
+;
+; This needs to land in a `context` structure that is dynamically allocated, but
+; at this stage of development globals suffice.
 
 Global retval.i
 Global orig.tTERMIOS
@@ -50,44 +118,51 @@ Global raw.tTERMIOS
 
 ; ----- Forward declaration of procedures -------------------------------------
 
-; I'm not sure if `OpenConsole` and `CloseConsole` are needed for this. When I
-; run it from a command line prompt without them everything seems fine.
-
-; ----- Forward declaration of procedures -------------------------------------
+; Nothing as of yet.
 
 ; ----- Utility functions -----------------------------------------------------
 
-; Common failure exit
+; The original code has a `die` procedure. I've created something that allows
+; for a little more information if desired.
 
-Procedure die(s.s)
-  VT100_ERASE_SCREEN()
-  VT100_HOME_CURSOR()
+Procedure abort(s.s, erase.i=#true, extra.s="", rc.i=-1)
+  If erase
+    VT100_ERASE_SCREEN()
+    VT100_HOME_CURSOR()
+  EndIf
+  PrintN("")
   PrintN("!Abort! " + s)
-  End -1
+  If extra <> ""
+    PrintN(extra)
+  EndIf
+  End rc
 EndProcedure
 
-; Note: The tutorial suggested piping data on stdin as a way to force an
-; error return from get and set attr. On MacOS this gets a results in a
-; segmentation fault. It's not worth the effort to try to handle such an
-; oddball situation in code so I have not tested a real error through
-; these routines.
+Procedure die(s.s)
+  abort(s.s)
+EndProcedure
 
-; Restore the original terminal configuration.
+; ----- Disable raw mode/restore prior saved terminal configuration -----------
+;
+; The code in the C `main` uses `atexit` to ensure that disable_raw_mode is
+; called. I believe I can do this in PureBasic by decorating the Procedure
+; declaration with either `C` or `Dll` to force the correct ABI but I haven't
+; yet.
 
-Procedure DisableRawMode()
+Procedure disable_raw_mode()
   if -1 = fTCSETATTR(0, #TCSAFLUSH, orig)
-    Die("DisableRawMode-tcsetattr")
+    die("disable_raw_mode-tcsetattr")
   endif
 EndProcedure
 
+; ----- Enable raw mode for direct terminal access ----------------------------
+;
 ; Save the original terminal configuration and then put the terminal in a raw
-; uncooked configuation.
+; or uncooked configuation.
 
-Procedure EnableRawMode()
-  ; Better would be to add DisableRawMode to the atexit chain here, but for 
-  ; now it's left hard coded in the mainline.
+Procedure enable_raw_mode()
   If -1 = fTCGETATTR(0, orig)
-    Die("EnableRawMode-tcgetattr")
+    die("enable_raw_mode-tcgetattr")
   EndIf
   raw = orig
   raw\c_iflag = raw\c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
@@ -97,7 +172,7 @@ Procedure EnableRawMode()
   raw\c_cc[#VMIN] = 0       ; min number of bytes to return from read
   raw\c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
   If -1 = fTCSETATTR(0, #TCSAFLUSH, raw)
-    Die("EnableRawMode-tcsetattr")
+    die("enable_raw_mode-tcsetattr")
   EndIf
 EndProcedure
 
@@ -110,22 +185,23 @@ EndProcedure
 ; ----- System libraries ------------------------------------------------------
 ; ----- System libraries ------------------------------------------------------
 ; ----- System libraries ------------------------------------------------------
+
 ; ----- Display rows on the screen --------------------------------------------
 
-Procedure EditorDrawRows()
+Procedure editor_draw_rows()
   Define y.i, x.i
-  Define r.i = -1
   For y = 0 To 23
-    r = fWRITES(1, ~"~\r\n", 3) ; this is likely wrong
-    ; oddly, it wasn't.
+    ; The following header and trailer writes could be combined but as we
+    ; will be adding file text between the writes, separation makes
+    ; sense.
+    VT100_WRITE_STRING("~")       ; I should probably collapse these calls
+    VT100_CRLF()
   Next y
-  ; r is 4 but I think it should be 3. confusing, but it works. I need to keep
-  ; an eye out for this.
 EndProcedure
 
 ; ----- Read a keypress and return it one byte at a time ----------------------
 
-Procedure.a EditorReadKey()
+Procedure.a editor_read_key()
   Define n.i
   Define c.a
   ; On MacOS read doesn't mark no input as a hard error so check for nothing
@@ -146,10 +222,10 @@ EndProcedure
 
 ; ----- Handle keypress -------------------------------------------------------
 
-Procedure EditorProcessKey()
-  Define c.a = EditorReadKey()
+Procedure editor_process_key()
+  Define c.a = editor_read_key()
   Select c
-    Case CTRL_Q:
+    Case #CTRL_Q:
       ProcedureReturn 1
   EndSelect
   ProcedureReturn 0
@@ -157,10 +233,10 @@ EndProcedure
 
 ; ----- Clear and repaint the screen ------------------------------------------
 
-Procedure EditorRefreshScreen()
+Procedure editor_refresh_screen()
   VT100_ERASE_SCREEN()
   VT100_HOME_CURSOR()
-  EditorDrawRows()
+  editor_draw_rows()
   VT100_HOME_CURSOR()
   Define coord.tVT100_COORD_PAIR
   VT100_GET_CURSOR_POSITION(@coord)
@@ -168,14 +244,14 @@ EndProcedure
 
 ; ----- Mainline driver -------------------------------------------------------
 
-EnableRawMode()
+enable_raw_mode()
 
 Repeat
-  EditorRefreshScreen()
-  Define done.i = EditorProcessKey()
+  editor_refresh_screen()
+  Define done.i = editor_process_key()
 Until done
 
-DisableRawMode()
+disable_raw_mode()
 
 ; PrintN("")
 
