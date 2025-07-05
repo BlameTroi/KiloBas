@@ -54,6 +54,24 @@ EnableExplicit
 ;   as I don't do any arithmetic beyond pointer increment or decrement, and I
 ;   expect user memory to be well under the dividing line for positive and
 ;   negative numbers.
+;
+; * Most of the example PureBasic code I've seen guards code backwards from
+;   my personal coding standards. I'm going to try to use their style.
+;
+;   I would code:
+;
+;   If NOT somethingthatreturnsfalseonerror()
+;     do error things and exit
+;   EndIf
+;   guarded code
+;
+;   But the PureBasic style is:
+;
+;   If somethingthatreturnsfalseonerror()
+;     guarded code
+;   Else
+;     do error things and exit
+;   EndIf
 
 ; ----- Include system library interfaces -------------------------------------
 ;
@@ -63,35 +81,52 @@ EnableExplicit
 ; not planning to use `IncludePath`.
 ; files do not mentioned the subdirectory.
 
+; System include libraries (libc):
+
 ; XIncludeFile "syslib/ctype.pbi" ; not yet implemented
 XIncludeFile "syslib/errno.pbi"
 XIncludeFile "syslib/termios.pbi"
 ; XIncludeFile "syslib/stdio.h" ; not yet implemented
 ; XIncludeFile "syslib/stdlib.h" ; not yet implemented
 XIncludeFile "syslib/unistd.pbi"
-XIncludeFile "syslib/vt100.pbi"
+
+; My utility libraries:
+
+; XIncludeFile "syslib/vt100.pbi" ; removing for a bit
+
 
 ; ----- Keypress and response mapping -----------------------------------------
 ;
-; I couldn't come up with a better way to generate the control keys so
-; enumeration it is.
+; I couldn't come up with a better way to generate the control character
+; constants so enumeration it is. I'm adding the VT100/ANSI interpretation of
+; these as keys for reference.
 ;
 ; TODO: Move to a separate include file.
+; Name 	decimal 	octal 	hex 	C-escape 	Ctrl-Key 	Description 
+; BEL 	7 	007 	0x07 	\a 	^G 	Terminal bell 
+; BS 	8 	010 	0x08 	\b 	^H 	Backspace 
+; HT 	9 	011 	0x09 	\t 	^I 	Horizontal TAB 
+; LF 	10 	012 	0x0A 	\n 	^J 	Linefeed (newline) 
+; VT 	11 	013 	0x0B 	\v 	^K 	Vertical TAB 
+; FF 	12 	014 	0x0C 	\f 	^L 	Formfeed (also: New page NP) 
+; CR 	13 	015 	0x0D 	\r 	^M 	Carriage return 
+; ESC 	27 	033 	0x1B 	\e* 	^[ 	Escape character 
+; DEL 	127 	177 	0x7F 	<none> 	<none> 	Delete character 
 
-Enumeration CONTROL_KEYS 1 Step 1
+Enumeration ANSI_CHARACTERS 1
   #CTRL_A
   #CTRL_B
   #CTRL_C
   #CTRL_D
   #CTRL_E
   #CTRL_F
-  #CTRL_G
-  #CTRL_H
-  #CTRL_I
-  #CTRL_J
-  #CTRL_K
-  #CTRL_L
-  #CTRL_M
+  #CTRL_G               ; BEL Terminal bell       \b
+  #CTRL_H               ; BS  Basckspace          \b
+  #CTRL_I               ; HT  Horizontal tab      \t
+  #CTRL_J               ; LF  Linefeed (newline)  \n
+  #CTRL_K               ; VT  Vertical tab        \v
+  #CTRL_L               ; FF  Formfeed            \f
+  #CTRL_M               ; CR  Carriage return     \r
   #CTRL_N
   #CTRL_O
   #CTRL_P
@@ -105,20 +140,30 @@ Enumeration CONTROL_KEYS 1 Step 1
   #CTRL_X
   #CTRL_Y
   #CTRL_Z
+  #ESCAPE               ; ESC Escape (PB #ESC)   \e
+  #DELETE = 127         ; DEL Delete character
 EndEnumeration
+
+Structure tCOORD
+  row.i
+  col.i
+EndStructure
 
 ; ----- Common or global data -------------------------------------------------
 ;
 ; This needs to land in a `context` structure that is dynamically allocated, but
 ; at this stage of development globals suffice.
 
-Global retval.i
-Global orig.tTERMIOS
-Global raw.tTERMIOS
+Global.i        retval
+Global.tTERMIOS orig
+Global.tTERMIOS raw
+Global.tCOORD   cursor
+Global.tCOORD   dimensions
 
 ; ----- Forward declaration of procedures -------------------------------------
 
-; Nothing as of yet.
+Declare.i Erase_Screen()
+Declare.i Home_Cursor()
 
 ; ----- Utility functions -----------------------------------------------------
 
@@ -127,8 +172,8 @@ Global raw.tTERMIOS
 
 Procedure abort(s.s, erase.i=#true, extra.s="", rc.i=-1)
   If erase
-    VT100_ERASE_SCREEN()
-    VT100_HOME_CURSOR()
+    Erase_Screen()
+    Home_Cursor()
   EndIf
   PrintN("")
   PrintN("!Abort! " + s)
@@ -147,7 +192,7 @@ EndProcedure
 ; The code in the C `main` uses `atexit` to ensure that disable_raw_mode is
 ; called. I believe I can do this in PureBasic by decorating the Procedure
 ; declaration with either `C` or `Dll` to force the correct ABI but I haven't
-; yet.
+; yooet.
 
 Procedure disable_raw_mode()
   if -1 = fTCSETATTR(0, #TCSAFLUSH, orig)
@@ -176,7 +221,115 @@ Procedure enable_raw_mode()
   EndIf
 EndProcedure
 
+; Cursor up 	ESC [ Pn A 
+; Cursor down 	ESC [ Pn B 
+; Cursor forward (right) 	ESC [ Pn C 
+; Cursor backward (left) 	ESC [ Pn D 
+; Send data to the terminal.
+;
+; Raw text can be sent after marshalling out of the string and into
+; an Ascii byte buffer. Commands are text with some prefix as defined
+; in the VT100 terminal specification. 
+;
+; There are four prefixes:
+;
+; ESC - sequence starting with ESC (\x1B)
+; CSI - Control Sequence Introducer: sequence starting with ESC [ or CSI (\x9B)
+; DCS - Device Control String: sequence starting with ESC P or DCS (\x90)
+; OSC - Operating System Command: sequence starting with ESC ] or OSC (\x9D)
+;
+; Where there are multiple prefix options I will use the ESC [ P ] variants.
+
+Procedure.i Write_String(s.s)
+  Define *buf = AllocateMemory(Len(s) + 8) 
+  If *buf
+    FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII) 
+    Define i.i 
+    Define *ptr = *buf 
+    For i = 1 To Len(s) 
+      PokeA(*ptr, Asc(Mid(s, i, 1))) 
+      *ptr = *ptr + 1 
+    Next i 
+    Define sent.i = fWRITE(1, *buf, Len(s)) 
+    Define err.i = fERRNO() 
+    FreeMemory(*buf) 
+    If sent = Len(s)
+      ProcedureReturn #true
+    EndIf
+    ; What error checking could be done here?
+    ProcedureReturn #false
+  EndIf
+  ; This is a different error
+  ; we should report and exits program as the memory alloc failed
+  ProcedureReturn #false
+EndProcedure
+
+Procedure.i String_to_Buffer(*buf, s.s)
+  Define *ptr = *buf
+  Define.i i
+  For i = 1 To Len(s)
+    PokeA(*ptr, Asc(Mid(s, i, 1)))
+    *ptr = *ptr + 1
+  Next i
+  PokeA(*ptr, 0) ; this is not strictly needed
+  ProcedureReturn #true
+EndProcedure
+
+Procedure.i Write_CSI_Command(s.s)
+  Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
+  If *buf
+    FillMemory(*buf, Len(s) + 8, #PB_ASCII)
+    PokeA(*buf, $1b)
+    PokeA(*buf + 1, '[')
+    String_to_Buffer(*buf + 2, s)
+    Define.i sent = fWRITE(1, *buf, Len(s) + 2)
+    FreeMemory(*buf)
+    If sent = Len(s) + 2
+      ProcedureReturn #true
+    Else
+      ; error on send
+      ProcedureReturn #false
+    EndIf
+  Else
+    ; error on allocate
+    ProcedureReturn #false
+  Endif
+EndProcedure
+
+Procedure.i Write_ESC_Command(s.s)
+  Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
+  If *buf
+    FillMemory(*buf, Len(s) + 8, #PB_ASCII)
+    PokeA(*buf, $1b)
+    String_to_Buffer(*buf + 1, s)
+    Define.i sent = fWRITE(1, *buf, Len(s) + 1)
+    If sent = Len(s) + 1
+      ProcedureReturn #true
+    Else
+      ; error on send
+      ProcedureReturn #false
+    EndIf
+  Else
+    ; error on allocate
+    ProcedureReturn #false
+  Endif
+EndProcedure
+
 ; ----- System libraries ------------------------------------------------------
+
+Procedure.i Erase_Screen()
+  ProcedureReturn Write_CSI_COMMAND("2J") ; ED Erase in display
+  ; "0J" or "J" from active position to end of display
+  ; "1J" erase from start of display to active position
+  ; "2J" entire screen
+  ; none of these change the cursor position
+EndProcedure
+
+Procedure.i Home_Cursor()
+  ProcedureReturn Write_CSI_Command("H") ; CUP Cursor position to home
+  ; r;cH which should be one based, if paraemters are omitted
+  ; then topmost leftmost. 0;0H and 1;1H should be equivalent
+EndProcedure 
 ; ----- System libraries ------------------------------------------------------
 ; ----- System libraries ------------------------------------------------------
 ; ----- System libraries ------------------------------------------------------
@@ -189,23 +342,23 @@ EndProcedure
 ; ----- Display rows on the screen --------------------------------------------
 
 Procedure editor_draw_rows()
-  Define y.i, x.i
-  For y = 0 To 23
-    ; The following header and trailer writes could be combined but as we
-    ; will be adding file text between the writes, separation makes
-    ; sense.
-    VT100_WRITE_STRING("~")       ; I should probably collapse these calls
-    VT100_CRLF()
-  Next y
+  Write_ESC_Command("7") ; DECSC save cursor
+  Define row.i, col.i
+  For row = 1 To 23
+    Write_String(~"~\r\n")
+  Next row
+  Write_string("~")
+  Write_ESC_Command("8") ; DECRC restore cursor
 EndProcedure
 
 ; ----- Read a keypress and return it one byte at a time ----------------------
+;
+; On MacOS read doesn't mark no input as a hard error so check for nothing
+; read and handle as if we got an error return flagged #EAGAIN
 
 Procedure.a editor_read_key()
   Define n.i
   Define c.a
-  ; On MacOS read doesn't mark no input as a hard error so check for nothing
-  ; read and handle as if we got an error return flagged #EAGAIN
   Repeat
     n = fREAD(0, @c, 1)
     If n = -1
@@ -222,37 +375,127 @@ EndProcedure
 
 ; ----- Handle keypress -------------------------------------------------------
 
-Procedure editor_process_key()
+Procedure.i editor_process_key()
   Define c.a = editor_read_key()
   Select c
-    Case #CTRL_Q:
-      ProcedureReturn 1
-  EndSelect
-  ProcedureReturn 0
-EndProcedure
+    Case #CTRL_D
+      Write_ESC_Command("7") ; DECSC save cursor
+      ; The behavior for CUP 999;999H is not defined, so CUD/CUF instead
+      Write_CSI_COMMAND("999B") ; CUD cursor down this many
+      Write_CSI_Command("999C") ; CUF cursor forward this many
+      Write_CSI_Command("6n") ; CPR cursor position report 6n -> r;cR
+      Define.a char
+      Define.i i
+      Define.s s
+      While fREAD(0, @char, 1)
+        s = s + Chr(char)
+        If char = 'R'
+          Break
+        EndIf
+      Wend
+      Home_Cursor()
+      If Left(s, 1) = Chr($1b) And Right(s, 1) = "R"
+        Write_String("   " + Right(s, Len(s) - 1) + "   ")
+        Define.s t = ~"\r\n"
+        For i = 1 To Len(s)
+          t = t + ~"\r\n   "
+          ; Define.a b 
+          ; b = Asc(Mid(s, i, 1)) 
+          Define.a b = Asc(Mid(s, i, 1))
+          If fISCNTRL(b)
+            t = t + "?"
+          Else
+            t = t + Chr(b)
+          EndIf
+        Next i
+        Write_String(t)
+      Else
+        Write_String("ERROR ON RESPONSE TO GET CURSOR")
+      EndIf
+      Write_ESC_Command("8") ; DECRC restore cursor
+    Case #CTRL_P
+      Write_CSI_Command("6n") ; CPR cursor position report 6n -> r;cR
+      Define.a char
+      Define.i i
+      Define.s s
+      While fREAD(0, @char, 1)
+        s = s + Chr(char)
+        If char = 'R'
+          Break
+        EndIf
+      Wend
+      Home_Cursor()
+      If Left(s, 1) = Chr($1b) And Right(s, 1) = "R"
+        Write_String("   " + Right(s, Len(s) - 1) + "   ")
+        ; For i = 1 To Len(s) 
+        ;   Define.a b = Asc(Mid(s, i, 1))
+        ;   If fISCNTRL(b) 
+        ;     Print("?") 
+        ;   Else 
+        ;     Print(Chr(b)) 
+        ;   EndIf 
+        ; Next i 
+      Else
+        Write_String("ERROR ON RESPONSE TO GET CURSOR")
+      EndIf
+    Case #CTRL_Q
+      Write_CSI_Command("10;1H") ; CUP cursor position 10 col 1
+      ProcedureReturn #true
+    Case 'w', 'W'
+      ; Define coord.tCOORD 
+      ; VT100_GET_CURSOR(@coord) 
+      ; coord\row = coord\row - 1 
+      ; If coord\row < 1 
+      ;   coord\row = 23 
+      ; EndIf 
+      ; VT100_SET_CURSOR(@coord) 
+    Case 'a', 'A'
+      ; Define coord.tCOORD 
+      ; VT100_GET_CURSOR(@coord) 
+      ; coord\col = coord\col - 1 
+      ; If coord\col < 1 
+      ;   coord\col = 79 
+      ; EndIf 
+      ; VT100_SET_CURSOR(@coord) 
+    Case 's', 'S'
+      ; Define coord.tCOORD 
+      ; VT100_GET_CURSOR(@coord) 
+      ; coord\row = coord\row + 1 
+      ; If coord\row > 23 
+      ;   coord\row = 1 
+      ; EndIf 
+      ; VT100_SET_CURSOR(@coord) 
+    Case 'd', 'D'
+      ; Define coord.tCOORD 
+      ; VT100_GET_CURSOR(@coord) 
+      ; coord\row = coord\col - 1 
+      ; If coord\col < 1 
+      ;   coord\col = 23 
+      ; EndIf 
+      ; VT100_SET_CURSOR(@coord) 
+    Default
+      ; to be determined
+    EndSelect
+    ProcedureReturn #false
+  EndProcedure
 
 ; ----- Clear and repaint the screen ------------------------------------------
 
 Procedure editor_refresh_screen()
-  VT100_ERASE_SCREEN()
-  VT100_HOME_CURSOR()
+  Home_Cursor()
   editor_draw_rows()
-  VT100_HOME_CURSOR()
-  Define coord.tVT100_COORD_PAIR
-  VT100_GET_CURSOR_POSITION(@coord)
 EndProcedure
 
 ; ----- Mainline driver -------------------------------------------------------
 
 enable_raw_mode()
-
+Erase_Screen()
 Repeat
   editor_refresh_screen()
-  Define done.i = editor_process_key()
-Until done
+Until editor_process_key()
 
 disable_raw_mode()
 
-; PrintN("")
-
 End
+
+; kilo.pb ends here.

@@ -1,5 +1,22 @@
 ; vt100.pbi - a bunch of VT100 escape sequences from the Dec VT100 manual.
 
+; ;;;;;;;;; trashing this, need to redo better once I get done with kilo.pb.
+; ;;;;;;;;; it may or may not compile, it certainly won't run correctly.
+;
+; DO NOT INCLUDE
+;
+; ;;;;;;;;; obsolete
+; ;;;;;;;;; obsolete
+; ;;;;;;;;; obsolete
+; ;;;;;;;;; obsolete
+; ;;;;;;;;; obsolete
+; ;;;;;;;;; obsolete
+; ;;;;;;;;; obsolete
+; ;;;;;;;;; obsolete
+; ;;;;;;;;; obsolete
+; ;;;;;;;;; obsolete
+; ;;;;;;;;; obsolete
+
 ; work in progress
 
 EnableExplicit
@@ -19,56 +36,63 @@ XIncludeFile "unistd.pbi"
 ; That worked. There is probably a better way to do this but I'll save it for
 ; another time.
 
-#_VT100_SEQUENCE_MAX = 20
-Structure _tVT100_SEQUENCE
-  c.a[#_VT100_SEQUENCE_MAX]
+#_VT100_CMD_SEQUENCE_MAX = 20
+Structure _tVT100_CMD_SEQUENCE
+  c.a[#_VT100_CMD_SEQUENCE_MAX]
   len.i
 EndStructure
 
-; A response from either query position or query size. This is meant to be 
-; externally visible.
-
-; todo: rotate xy.
+; A response from query position, query size; or a arguments to set position.
 
 Structure tVT100_COORD_PAIR
-  x.i
-  y.i
+  row.i
+  col.i
 EndStructure
 
+; Preserve ERRNO for error handling.
+
+Global VT100_ERRNO.i
+
 ; ----- VT100 Command Sequences -----------------------------------------------
+;
+; Here are the terminal commands I use (or expect to use).
+;
+; These values are almost all from the Dec VT100 Manual, currently found at
+; https://vt100.net/.
+;
+; The _tVT100_CMD_SEQUENCE is an array of ASCII bytes and a length. All of the
+; commands are prefixed with $1B (ESC). A low level call to `write` is used to
+; sent the command to the terminal.
 
-; There are more commands and queries than I need. As more are needed they can
-; be added. The basic idea is a structure with an array of characters and
-; a length. A function will call the write terminal function as needed.
+; Erasing
 
-; Erasing 
-
-Global _VT100_ERASE_CURSOR_EOL._tVT100_SEQUENCE
-Global _VT100_ERASE_BOL_CURSOR._tVT100_SEQUENCE
-Global _VT100_ERASE_CURSOR_LINE._tVT100_SEQUENCE
-Global _VT100_ERASE_CURSOR_EOS._tVT100_SEQUENCE
-Global _VT100_ERASE_BOS_CURSOR._tVT100_SEQUENCE
-Global _VT100_ERASE_ENTIRE_SCREEN._tVT100_SEQUENCE
+Global _VT100_CMD_ERASE_CURSOR_EOL._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_ERASE_BOL_CURSOR._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_ERASE_CURSOR_LINE._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_ERASE_CURSOR_EOS._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_ERASE_BOS_CURSOR._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_ERASE_ENTIRE_SCREEN._tVT100_CMD_SEQUENCE
 
 ; Querying
 
-Global _VT100_GET_CURSOR_POS._tVT100_SEQUENCE
+Global _VT100_CMD_GET_CURSOR._tVT100_CMD_SEQUENCE
 
 ; Positioning
 
-Global _VT100_CURSOR_HOME._tVT100_SEQUENCE
-Global _VT100_CURSOR_DOWN._tVT100_SEQUENCE
-Global _VT100_CURSOR_FORWARD._tVT100_SEQUENCE
-Global _VT100_CURSOR_DOWN_MAX._tVT100_SEQUENCE
-Global _VT100_CURSOR_FORWARD_MAX._tVT100_SEQUENCE
+Global _VT100_CMD_CURSOR_HOME._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_CURSOR_UP._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_CURSOR_DOWN._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_CURSOR_FORWARD._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_CURSOR_BACKWARD._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_CURSOR_DOWN_MAX._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_CURSOR_FORWARD_MAX._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_CURSOR_SAVE._tVT100_CMD_SEQUENCE
+Global _VT100_CMD_CURSOR_RESTORE._tVT100_CMD_SEQUENCE
 
-; ----- Helper to fill in the sequence template -------------------------------
+; Build the complete command sequence.
 
-; There is a rather simple overflow check. This should only ever be seen during
-; development.
-
-Procedure _VT100_LOAD_SEQUENCE(cmd.s, *seq._tVT100_SEQUENCE)
-  if len(cmd) + 1 >= #_VT100_SEQUENCE_MAX
+Procedure _VT100_LOAD_COMMAND(cmd.s, *seq._tVT100_CMD_SEQUENCE)
+  if len(cmd) + 1 >= #_VT100_CMD_SEQUENCE_MAX
     PrintN("Overflow of VT100 sequence for " + cmd.s)
     End -1
   EndIf
@@ -80,89 +104,112 @@ Procedure _VT100_LOAD_SEQUENCE(cmd.s, *seq._tVT100_SEQUENCE)
   Next i
 EndProcedure
 
-; ----- Build command sequences -----------------------------------------------
-
-; These values are almost all from the Dec VT100 Manual, currently found at
-; https://vt100.net/.
+; Load the command sequence values. I couldn't figure out a way to do this as
+; a string literal (there's no escape for ESC) so these are built during
+; program initialization.
+;
+; More proper naming would use the sequence introduction. These are:
+;
+; ESC - sequence starting with ESC (\x1B)
+; CSI - Control Sequence Introducer: sequence starting with ESC [ or CSI (\x9B)
+; DCS - Device Control String: sequence starting with ESC P or DCS (\x90)
+; OSC - Operating System Command: sequence starting with ESC ] or OSC (\x9D)
+;
+; Everything I've needed so far is preceeded by CSI.
 
 Procedure _VT100_INITIALIZE()
 
   ; Erasing
 
-  _VT100_LOAD_SEQUENCE("[0K", _VT100_ERASE_CURSOR_EOL)
-  _VT100_LOAD_SEQUENCE("[1K", _VT100_ERASE_BOL_CURSOR)
-  _VT100_LOAD_SEQUENCE("[2K", _VT100_ERASE_CURSOR_LINE)
-  _VT100_LOAD_SEQUENCE("[0J", _VT100_ERASE_CURSOR_EOS)
-  _VT100_LOAD_SEQUENCE("[1J", _VT100_ERASE_BOS_CURSOR)
-  _VT100_LOAD_SEQUENCE("[2J", _VT100_ERASE_ENTIRE_SCREEN)
+  _VT100_LOAD_COMMAND("[0K", _VT100_CMD_ERASE_CURSOR_EOL)
+  _VT100_LOAD_COMMAND("[1K", _VT100_CMD_ERASE_BOL_CURSOR)
+  _VT100_LOAD_COMMAND("[2K", _VT100_CMD_ERASE_CURSOR_LINE)
+  _VT100_LOAD_COMMAND("[0J", _VT100_CMD_ERASE_CURSOR_EOS)
+  _VT100_LOAD_COMMAND("[1J", _VT100_CMD_ERASE_BOS_CURSOR)
+  _VT100_LOAD_COMMAND("[2J", _VT100_CMD_ERASE_ENTIRE_SCREEN)
 
   ; Positioning
 
-  ; These all take optional numeric arguments. The defaults (no arguments) are as named.
-  ; Since all I've seen a need for so far is upper left (home) and lower right, I'm
-  ; going with hard coding for those sequences as well.
+  ; These all take optional numeric arguments. The defaults (no arguments) are
+  ; as named. Since all I've seen a need for so far is upper left (home) and
+  ; lower right, I'm going with hard coding for those sequences as well.
 
-  _VT100_LOAD_SEQUENCE("[H", _VT100_CURSOR_HOME)
-  _VT100_LOAD_SEQUENCE("[B", _VT100_CURSOR_DOWN)
-  _VT100_LOAD_SEQUENCE("[C", _VT100_CURSOR_FORWARD)
+  _VT100_LOAD_COMMAND("[H", _VT100_CMD_CURSOR_HOME)
+  _VT100_LOAD_COMMAND("[A", _VT100_CMD_CURSOR_UP)
+  _VT100_LOAD_COMMAND("[B", _VT100_CMD_CURSOR_DOWN)
+  _VT100_LOAD_COMMAND("[C", _VT100_CMD_CURSOR_FORWARD)
+  _VT100_LOAD_COMMAND("[D", _VT100_CMD_CURSOR_BACKWARD)
+  _VT100_LOAD_COMMAND("7", _VT100_CMD_CURSOR_SAVE)
+  _VT100_LOAD_COMMAND("8", _VT100_CMD_CURSOR_RESTORE)
 
-  ; The following two could be combined in a [row;colH command but the behavior is not
-  ; defined when one does a position way off the screen to determine its size. The
-  ; behavior for the [rowsB and [colsC is defined.
+  ; The following two could be combined in a [row;colH command but the behavior
+  ; is not defined when one does a position way off the screen to determine its
+  ; size. The behavior for the [rowsB and [colsC is defined.
 
-  _VT100_LOAD_SEQUENCE("[999B", _VT100_CURSOR_DOWN_MAX)
-  _VT100_LOAD_SEQUENCE("[999C", _VT100_CURSOR_FORWARD_MAX)
+  _VT100_LOAD_COMMAND("[999B", _VT100_CMD_CURSOR_DOWN_MAX)
+  _VT100_LOAD_COMMAND("[999C", _VT100_CMD_CURSOR_FORWARD_MAX)
 
   ; Querying
 
-  _VT100_LOAD_SEQUENCE("[6n", _VT100_GET_CURSOR_POS)
+  _VT100_LOAD_COMMAND("[6n", _VT100_CMD_GET_CURSOR)
 
 EndProcedure
 
 ; ----- Primitives ------------------------------------------------------------
-
-; The procedure return for all of these is number of bytes written, which sould
-; match the length stored in the sequence. If a response from the terminal is needed,
-; the return is not yet defined.
 ;
-; Returning < 1 indicates an error.
+; These functions return #true for success or #false for failure. See the
+; global error information at the top of this module for more details if they
+; are available.
 
-Procedure.i _VT100_WRITE_NO_RESPONSE(*cmd._tVT100_SEQUENCE)
+; Issue a command sequence to the terminal that is not expecing a response.
+
+Procedure.i _VT100_WRITE_CMD(*cmd._tVT100_CMD_SEQUENCE)
   Define sent.i = fWRITE(1, *cmd, *cmd\len)
+  If sent = *cmd\len
+    ProcedureReturn #true
+  Endif
   ; could add error code here
-  ProcedureReturn sent
+  ProcedureReturn #false
 EndProcedure
 
-; Sends a request and reads the response into the supplied buffer. Return is -1 for
-; an error, 0 is probably an error (no response), and a positive number is the number
-; of bytes in the response.
+; Like WRITE_NO_RESPONSE but a response is expected from the terminal. One
+; example would be CMD_GET_CURSOR. The caller must provide a buffer area
+; (an array of ascii bytes) and the maximum allowed response length.
+;
+; The assumption is that the whole response is available after the write
+; completes and that there will be timing gap after the response which we
+; can use to recognize its end.
+;
+; If that assumption is wrong, I'll need to determine a way to recognize
+; the end. So far the only response expected if from a query of the cursor
+; position. The format of the response is ESC [ row ; col R. The rest of
+; the status requests are things we won't be using.
 
-Procedure.i _VT100_WRITE_AND_RESPONSE(*cmd._tVT100_SEQUENCE, *buf.tTCBUFFER, maxlen.i)
-  Define sent.i = fWRITE(1, *cmd, *cmd\len)
-  If *cmd\len <> sent
-    PrintN("Error on write and response -- write")
-    ProcedureReturn -1
-  EndIf
-  FillMemory(*buf, maxlen, 0, #PB_ASCII)
-  ; The expectation here is the whole response is available and when we do not
-  ; get a character on a read, we have reached the end of the response.
-
-  Define c.a
-  Define i.i
-  While fREAD(0, @c, 1) = 1
-    *buf\c[i] = c
-    i = i + 1
-    if i >= maxlen
-      PrintN("Buffer overflow on write and response -- read")
-      ProcedureReturn -1
+Procedure.s HEX_DUMP(*ptr, n.i)
+  Define hexes.s = ""
+  Define chars.s = ""
+  Define c.a = 0
+  While n
+    c = PeekA(*ptr)
+    If fISCNTRL(c)
+      chars = chars + "."
+    Else
+      chars = chars + Chr(c)
     EndIf
+    chars = chars + Right("00" + Hex(c), 2)
+    *ptr = *ptr + 1
+    n = n - 1
   Wend
-  ProcedureReturn i
+  ProcedureReturn hexes + "*" + chars + "*"
 EndProcedure
 
-; ----- Higher level requests -------------------------------------------------
-
-; These return #true for success and #false for failure.
+; ----- API -------------------------------------------------------------------
+;
+; These are the external API functions for terminal control. They all return
+; #true on success or #false on failure.
+;
+; There are no lower level primitives for write and read operations, the
+; functions are called directly.
 
 ; Write a single character to the terminal.
 
@@ -176,47 +223,74 @@ Procedure.i VT100_WRITE_CHARACTER(c.a)
   ProcedureReturn #false
 EndProcedure
 
-; Write a PureBasic string to the terminal. I'm not trusting that all characters will be
-; 8 bit. This is probably wasted effort.
+; Write a PureBasic string to the terminal.
+;
+; I'm am not clear on the behavior of `write` when a utf-8 string with
+; multi-byte characters is sent. I'm going to assume that in my use of
+; this code I'm always using US ASCII characters.
+;
+; I marshall the string into a separate buffer because I couldn't get
+; writing @s to work consistently.
 
 Procedure.i VT100_WRITE_STRING(s.s)
-  Define *buf = AllocateMemory(Len(s) + 8)
-  Define i.i = 0
-  Define *ptr = *buf
-  For i = 1 To Len(s)
-    PokeA(*ptr, Asc(Mid(s, i, 1)))
-    *ptr = *ptr + 1
-  Next i
-  Define sent.i = fWRITE(1, *buf, Len(s))
-  Define err.i = fERRNO()
-  FreeMemory(*buf)
-  If sent = Len(s)
-    ProcedureReturn #true
+  Define *buf = AllocateMemory(Len(s) + 8) 
+  If *buf
+    FillMemory(*buf, 64, 0, #PB_ASCII) 
+    Define i.i 
+    Define *ptr = *buf 
+    For i = 1 To Len(s) 
+      PokeA(*ptr, Asc(Mid(s, i, 1))) 
+      *ptr = *ptr + 1 
+    Next i 
+    Define sent.i = fWRITE(1, *buf, Len(s)) 
+    Define err.i = fERRNO() 
+    FreeMemory(*buf) 
+    If sent = Len(s)
+      ProcedureReturn #true
+    EndIf
+    ; What error checking could be done here?
+    ProcedureReturn #false
   EndIf
-  ; Could do error handling here
+  ; This is a different error
+  ; we should report and exits program as the memory alloc failed
   ProcedureReturn #false
 EndProcedure
 
-; Home the cursor, does not erase screen.
+; Retired 'build a byte buffer' call.
+;   Define *buf = AllocateMemory(Len(s) + 8) 
+;   If *buf 
+;   FillMemory(*resp, 64, 0, #PB_ASCII) 
+;   Define i.i 
+;   Define *ptr = *buf 
+;   For i = 1 To Len(s) 
+;     PokeA(*ptr, Asc(Mid(s, i, 1))) 
+;     *ptr = *ptr + 1 
+;   Next i 
+;   Define sent.i = fWRITE(1, *buf, Len(s)) 
+;   Define err.i = fERRNO() 
+;   FreeMemory(*buf) 
+;   If sent = Len(s) 
+;     ProcedureReturn #true 
+;   EndIf 
+;   ; Could do error handling here 
+;     PrintN("FATAL: VT100_GET_CURSOR_POSITION could not allocate response buffer.") IN
+;     End -1 
+;   EndIf 
+;   ProcedureReturn #false 
+; EndProcedure 
+
+; Home the cursor.
+;
+; There is an explicit terminal command so no coordinates are needed.
 
 Procedure.i VT100_HOME_CURSOR()
-  Define sent.i = _VT100_WRITE_NO_RESPONSE(@_VT100_CURSOR_HOME)
-  If sent = _VT100_CURSOR_HOME\len
-    ProcedureReturn #true
-  EndIf
-  ; Could do error handling here
-  ProcedureReturn #false
+  ProcedureReturn _VT100_WRITE_CMD(@_VT100_CMD_CURSOR_HOME)
 EndProcedure
 
-; Erases the entire screen, do not move cursor.
+; Erases the entire screen without moving the curssor.
 
 Procedure.i VT100_ERASE_SCREEN()
-  Define sent.i = _VT100_WRITE_NO_RESPONSE(@_VT100_ERASE_ENTIRE_SCREEN)
-  If sent = _VT100_ERASE_ENTIRE_SCREEN\len
-    ProcedureReturn #true
-  EndIf
-  ; Could do error handling here
-  ProcedureReturn #false
+  ProcedureReturn _VT100_WRITE_CMD(@_VT100_CMD_ERASE_ENTIRE_SCREEN)
 EndProcedure
 
 ; CRLF needed instead of just LF when in raw mode.
@@ -225,69 +299,254 @@ Procedure.i VT100_CRLF()
   ProcedureReturn VT100_WRITE_STRING(~"\r\n")
 EndProcedure
 
-; DSR – Device Status Report 
-; ESC [ Ps n 	default value: 0 
+; Save and restore (I believe on a stack managed by the terminal) the cursor location.
+
+Procedure VT100_SAVE_CURSOR()
+  ProcedureReturn _VT100_WRITE_CMD(_VT100_CMD_CURSOR_SAVE)
+EndProcedure
+
+Procedure VT100_RESTORE_CURSOR()
+  ProcedureReturn _VT100_WRITE_CMD(_VT100_CMD_CURSOR_RESTORE)
+EndProcedure
+
+; Move cursor to row,col (ESC [ row; col H).
+; Valid ANSI Mode Control Sequences 
 ;
-; Requests and reports the general status of the VT100 according to the following parameter(s). 
-; Parameter 	Parameter Meaning 
-; 0 	Response from VT100 – Ready, No malfunctions detected (default) 
-; 3 	Response from VT100 – Malfunction – retry 
-; 5 	Command from host – Please report status (using a DSR control sequence) 
-; 6 	Command from host – Please report active position (using a CPR control sequence) 
-; int getCursorPosition(int *rows, int *cols) { 
-;   char buf[32]; 
-;   unsigned int i = 0; 
-;   if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1; 
-;   while (i < sizeof(buf) - 1) { 
-;     if (read(STDIN_FILENO, &buf[i], 1) != 1) break; 
-;     if (buf[i] == 'R') break; 
-;     i++; 
-;   } 
-;   buf[i] = '\0'; 
-;   printf("\r\n&buf[1]: '%s'\r\n", &buf[1]); 
-;   editorReadKey(); 
-;   return -1; 
-; } 
-; Not implemented.
+;     CPR – Cursor Position Report – VT100 to Host 
+;     CUB – Cursor Backward – Host to VT100 and VT100 to Host 
+;     CUD – Cursor Down – Host to VT100 and VT100 to Host 
+;     CUF – Cursor Forward – Host to VT100 and VT100 to Host 
+;     CUP – Cursor Position 
+;     CUU – Cursor Up – Host to VT100 and VT100 to Host 
+;     DA – Device Attributes 
+;     DECALN – Screen Alignment Display (DEC Private) 
+;     DECANM – ANSI/VT52 Mode (DEC Private) 
+;     DECARM – Auto Repeat Mode (DEC Private) 
+;     DECAWM – Autowrap Mode (DEC Private) 
+;     DECCKM – Cursor Keys Mode (DEC Private) 
+;     DECCOLM – Column Mode (DEC Private) 
+;     DECDHL – Double Height Line (DEC Private) 
+;     DECDWL – Double-Width Line (DEC Private) 
+;     DECID – Identify Terminal (DEC Private) 
+;     DECINLM – Interlace Mode (DEC Private) 
+;     DECKPAM – Keypad Application Mode (DEC Private) 
+;     DECKPNM – Keypad Numeric Mode (DEC Private) 
+;     DECLL – Load LEDS (DEC Private) 
+;     DECOM – Origin Mode (DEC Private) 
+;     DECRC – Restore Cursor (DEC Private) 
+;     DECREPTPARM – Report Terminal Parameters 
+;     DECREQTPARM – Request Terminal Parameters 
+;     DECSC – Save Cursor (DEC Private) 
+;     DECSCLM – Scrolling Mode (DEC Private) 
+;     DECSCNM – Screen Mode (DEC Private) 
+;     DECSTBM – Set Top and Bottom Margins (DEC Private) 
+;     DECSWL – Single-width Line (DEC Private) 
+;     DECTST – Invoke Confidence Test 
+;     DSR – Device Status Report 
+;     ED – Erase In Display 
+;     EL – Erase In Line 
+;     HTS – Horizontal Tabulation Set 
+;     HVP – Horizontal and Vertical Position 
+;     IND – Index 
+;     LNM – Line Feed/New Line Mode 
+;     NEL – Next Line 
+;     RI – Reverse Index 
+;     RIS – Reset To Initial State 
+;     RM – Reset Mode 
+;     SCS – Select Character Set 
+;     SGR – Select Graphic Rendition 
+;     SM – Set Mode 
+;     TBC – Tabulation Clear 
+; WORKS
+Procedure.i VT100_SET_CURSOR(*coord.tVT100_COORD_PAIR)
+  Define cmd.s = Chr($1b) + "["
+  cmd = cmd + Str(*coord\row)
+  cmd = cmd + ";"
+  cmd = cmd + Str(*coord\col)
+  cmd = cmd + "H"
+  ProcedureReturn VT100_WRITE_STRING(cmd)
+EndProcedure
 
-Procedure.i VT100_GET_CURSOR_POSITION(*coord.tVT100_COORD_PAIR)
-  _VT100_WRITE_NO_RESPONSE(_VT100_CURSOR_DOWN_MAX)
-  _VT100_WRITE_NO_RESPONSE(_VT100_CURSOR_FORWARD_MAX)
+; Get the current cursor position.
+;
+; If the cursor position can't be retrieved, a -1 is returned in *coord.
+;
+; The format of the response is ESC [ row ; col R.
 
-  Define *resp = AllocateMemory(64)
-  If NOT *resp
-    PrintN("FATAL: VT100_GET_CURSOR_POSITION could not allocate response buffer.")
-    End -1
-  EndIf
-  FillMemory(*resp, 64, 0, #PB_ASCII)
+Procedure.a VT100_READ_CHARACTER()
+  Define.a buf
+  fREAD(0, @buf, 1)
+  ProcedureReturn buf
+EndProcedure
 
-  Define len.i = _VT100_WRITE_AND_RESPONSE(_VT100_GET_CURSOR_POS, *resp, 63)
-  If len < 1
-    PrintN("Error in get cursor position")
-    ProcedureReturn -1
-  EndIf
-
-  *coord\x = 0
-  *coord\y = 0
-
-  ; Rehome to not hork the display
-  VT100_HOME_CURSOR()
-  Print(~"\n\r")
-  Define i.i = 0
-  Define *p = *resp
-  While PeekA(*p)
-    Define c.a = PeekA(*p)
-    Print(Str(i) + ":" + Hex(c) + ":")
-    If fISCNTRL(c)
-      Print(".")
-    Else
-      Print(Chr(c))
-    EndIf
-    Print(~"\n\r")
-    *p = *p + 1
+Procedure.i VT100_READ_RESPONSE(*buf, n.i, m.a)
+  Define.i i
+  FillMemory(*buf, n, 0)
+  Define *ptr = *buf
+  While i < n-1 And *ptr <> m And fREAD(0, *ptr, 1) = 1
+    i = i + 1
+    *ptr = *ptr + 1
   Wend
+  ProcedureReturn i
+EndProcedure
 
-  ProcedureReturn 0
+Procedure.i VT100_GET_CURSOR(*cur.tVT100_COORD_PAIR)
+  Define.a Dim buf(64) ; must address as buf(0)
+  Define.i i
+  If _VT100_WRITE_CMD(_VT100_CMD_GET_CURSOR)
+    Define *ptr = @buf(0)
+    Define bc.i = VT100_READ_RESPONSE(*ptr, 63, 'R')
+    Print(~"\r\nRead = " + Str(bc))
+    For i = 0 to bc
+      Print(~"\r\n $" + Hex(buf(i)))
+      If fISCNTRL(buf(i))
+        Print(" ?")
+      Else
+        Print(" " + Chr(buf(i)))
+      EndIf
+    Next i
+    Print(~"\r\n\r\nCheckpoint")
+    End -1
+  Else
+    ; Error on write get cursor
+    Print(~"\r\nError on write get cursor\r\n")
+    ProcedureReturn #false
+  EndIf
+  ProcedureReturn #true
+EndProcedure
+
+; Procedure.i VT100_GET_CURSOR(*coord.tVT100_COORD_PAIR) 
+;   *coord\row = -1 
+;   *coord\col = -1 
+;   If _VT100_WRITE_CMD(_VT100_CMD_GET_CURSOR) 
+;     Define *buf = AllocateMemory(64) 
+;     If *buf 
+;       FillMemory(*buf, 63, 0, #PB_ASCII) 
+;       Define c.a ; current character 
+;       Define i.i ; character count 
+;       ; Read a byte at a time checking for buffer overflow. 
+;       Define *ptr = *buf 
+;       While fREAD(0, *ptr, 1) = 1 
+;         fWRITE(2, *ptr, 1) 
+;         If i >= 63 OR *ptr = 'R' 
+;           Break 
+;         EndIf 
+;         i = i + 1 
+;         *ptr = *ptr + 1 
+;         *ptr = 0 
+;         if i >= 63 - 1 
+;           Print(HEX_DUMP(*buf, i) + ~"\r\n") 
+;           Print(HEX_DUMP(*buf, i) + ~"\r\n") 
+;           Print(HEX_DUMP(*buf, i) + ~"\r\n") 
+;           PrintN("Buffer overflow on write and response -- read") 
+;           ProcedureReturn #false 
+;         EndIf 
+;       Wend 
+;       WriteString(2, HEX_DUMP(*buf, i)) 
+;       WriteAsciiCharacter(2, 16) 
+;       Print(HEX_DUMP(*buf, i) + ~"\r\n") 
+;       Print(HEX_DUMP(*buf, i) + ~"\r\n") 
+;       Print(HEX_DUMP(*buf, i) + ~"\r\n") 
+;       *coord\row = 0 
+;       *coord\col = 0 
+;       ; advance to first digit 
+;       *ptr = *buf 
+;       If *ptr <> $1b 
+;         PrintN("Invalid response! 1 " + Hex(PeekA(*ptr))) 
+;         End -1 
+;       EndIf 
+;       *ptr = *ptr + 1 
+;       if *ptr <> '[' 
+;         PrintN("Invalid response! 2") 
+;         End -1 
+;       EndIf 
+;       *ptr = *ptr + 1 
+;       While *ptr <= '9' AND *ptr >= '0' 
+;         *coord\row = *coord\row * 10 + (*ptr - '0') 
+;         *ptr = *ptr + 1 
+;       Wend 
+;       if *ptr <> ';' 
+;         PrintN("Invalid response! 3") 
+;         End -1 
+;       EndIf 
+;       *ptr = *ptr + 1 
+;       While *ptr <= '9' AND *ptr >= '0' 
+;         *coord\col = *coord\col * 10 + (*ptr - '0') 
+;         *ptr = *ptr + 1 
+;       Wend 
+;       If *ptr <> 'R' 
+;         PrintN("Invalid response! 4") 
+;         End -1 
+;       EndIf 
+;       VT100_RESTORE_CURSOR() ; drop? 
+;       FreeMemory(*buf) 
+;       ProcedureReturn #true 
+;     EndIf 
+;     ; Do error reporting for failed write and response 
+;     FreeMemory(*buf) 
+;     ProcedureReturn #false 
+;   EndIf 
+;   ; Do error reporting for allocate failure 
+;   ProcedureReturn #false 
+; EndProcedure 
+
+; Report screen size.
+;
+; Procedure VT100_GET_SCREEN_SIZE(*coord.tVT100_COORD_PAIR) 
+;   *coord\x = -1 
+;   *coord\y = -1 
+;
+;   VT100_SAVE_CURSOR() 
+;
+;   _VT100_WRITE_CMD(_VT100_CMD_CURSOR_DOWN_MAX) 
+;   _VT100_WRITE_CMD(_VT100_CMD_CURSOR_FORWARD_MAX) 
+;
+;   Define *resp = AllocateMemory(64) 
+;   If NOT *resp 
+;     PrintN("FATAL: VT100_GET_CURSOR_POSITION could not allocate response buffer.") 
+;     End -1 
+;   EndIf 
+;   FillMemory(*resp, 64, 0, #PB_ASCII) 
+;
+;   Define len.i = _VT100_WRITE_AND_RESPONSE(_VT100_CMD_GET_CURSOR_POS, *resp, 63) 
+;   If len < 1 
+;     PrintN("Error in get cursor position") 
+;     ProcedureReturn 0 
+;   EndIf 
+;
+;   VT100_RESTORE_CURSOR() 
+;
+;   ; Response is ESC [ 999;999 R 
+;
+;   ; Rehome to not hork the display 
+;   VT100_HOME_CURSOR() 
+;   Print(~"\n\r") 
+;   Define i.i = 0 
+;   Define *p = *resp 
+;   While PeekA(*p) 
+;     Define c.a = PeekA(*p) 
+;     Print(Str(i) + ":" + Hex(c) + ":") 
+;     If fISCNTRL(c) 
+;       Print(".") 
+;     Else 
+;       Print(Chr(c)) 
+;     EndIf 
+;     Print(~"\n\r") 
+;     *p = *p + 1 
+;   Wend 
+;
+;   ProcedureReturn 0 
+; EndProcedure 
+
+; Determine screen size without updating the screen. Preserves the cursor
+; location.
+
+Procedure.i VT100_GET_SCREEN_SIZE(*coord.tVT100_COORD_PAIR)
+  VT100_SAVE_CURSOR()
+  VT100_ERASE_SCREEN()
+  VT100_GET_CURSOR(*coord)
+  VT100_RESTORE_CURSOR()
+  ProcedureReturn #true
 EndProcedure
 
 ; ESC [ Pn ; Pn R 	default value: 1 
