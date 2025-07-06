@@ -80,6 +80,10 @@ EnableExplicit
 ; other they do not specify a directory. This works as I want it to so I'm
 ; not planning to use `IncludePath`.
 ; files do not mentioned the sub directory.
+;
+; I expect to break this as I start making a set of my own libraries indepdent
+; from the system libraries. I want to have a txblib separate from syslib. When
+; I start on that I'll have some untangling to do.
 
 ; System include libraries (libc):
 
@@ -102,16 +106,6 @@ XIncludeFile "syslib/unistd.pbi"
 ; these as keys for reference.
 ;
 ; TODO: Move to a separate include file.
-; Name 	decimal 	octal 	hex 	C-escape 	Ctrl-Key 	Description 
-; BEL 	7 	007 	0x07 	\a 	^G 	Terminal bell 
-; BS 	8 	010 	0x08 	\b 	^H 	Backspace 
-; HT 	9 	011 	0x09 	\t 	^I 	Horizontal TAB 
-; LF 	10 	012 	0x0A 	\n 	^J 	Linefeed (newline) 
-; VT 	11 	013 	0x0B 	\v 	^K 	Vertical TAB 
-; FF 	12 	014 	0x0C 	\f 	^L 	Formfeed (also: New page NP) 
-; CR 	13 	015 	0x0D 	\r 	^M 	Carriage return 
-; ESC 	27 	033 	0x1B 	\e* 	^[ 	Escape character 
-; DEL 	127 	177 	0x7F 	<none> 	<none> 	Delete character 
 
 Enumeration ANSI_CHARACTERS 1
   #CTRL_A
@@ -160,8 +154,8 @@ EndStructure
 ; at this stage of development global variables suffice.
 
 Global.i        retval
-Global.tTERMIOS orig
-Global.tTERMIOS raw
+Global.tTERMIOS original_termios
+Global.tTERMIOS raw_termios
 Global.tCOORD   cursor_position
 Global.tCOORD   screen_size
 Global.tCOORD   message_area
@@ -171,19 +165,22 @@ Global.tCOORD   message_area
 ; Rather than try to manage just the ones I need, I'm going to declare all
 ; functions here.
 
+Declare.i VT100_GET_TERMIOS(*p.tTERMIOS)
+Declare.i VT100_RAW_MODE(*p.tTERMIOS)
+Declare.i VT100_RESTORE_MODE(*p.tTERMIOS)
+Declare.i VT100_CURSOR_HOME()
+Declare.i VT100_CURSOR_POSITION(*coord.tCOORD)
+Declare.i VT100_ERASE_ROW(row.i)
+Declare.i VT100_ERASE_SCREEN()
+Declare.i VT100_HARD_RESET()
+Declare.i VT100_REPORT_CURSOR_POSITION(*coord.tCOORD)
+Declare.i VT100_REPORT_SCREEN_DIMENSIONS(*coord.tCOORD)
+Declare.i VT100_WRITE_CSI(s.s)
+Declare.i VT100_WRITE_ESC(s.s)
+Declare.i VT100_WRITE_STRING(s.s)
+
+Declare.i VT100_STRING_TO_bUFFER(*buf, s.s)
 Declare   Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
-Declare.i Erase_Screen()
-Declare.i Cursor_Home()
-Declare.i Reset_Terminal()
-Declare.i Cursor_Position(*coord.tCOORD)
-Declare.i Report_Cursor_Position(*coord.tCOORD)
-Declare.i Report_Screen_Size(*coord.tCOORD)
-Declare   Disable_Raw_Mode()
-Declare   Enable_Raw_Mode()
-Declare.i Write_String(s.s)
-Declare.i String_to_Buffer(*buf, s.s)
-Declare.i Write_CSI_Command(s.s)
-Declare.i Write_ESC_Command(s.s)
 Declare.i Display_Message(sev.s, msg.s)
 Declare.i Log_Message(sev.s, msg.s)
 
@@ -198,11 +195,11 @@ Declare.i Log_Message(sev.s, msg.s)
 
 Procedure Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
   If erase
-    Erase_Screen()
-    Cursor_Home()
-    Disable_Raw_Mode()
+    VT100_ERASE_SCREEN()
+    VT100_CURSOR_HOME()
+    VT100_RESTORE_MODE(@original_termios)
   ElseIf reset
-    Reset_Terminal()
+    VT100_HARD_RESET()
   EndIf
   PrintN("")
   PrintN("kilo.pb fatal error!")
@@ -220,31 +217,36 @@ EndProcedure
 ; declaration with either `C` or `Dll` to force the correct ABI but I haven't
 ; yooet.
 
-Procedure Disable_Raw_Mode()
-  If -1 = fTCSETATTR(0, #TCSAFLUSH, orig)
+Procedure VT100_RESTORE_MODE(*p.tTERMIOS)
+  If -1 = fTCSETATTR(0, #TCSAFLUSH, *p)
     Abort("Disable_Raw_Mode failed tcsetattr", Str(fERRNO()))
   Endif
+  ProcedureReturn #true
 EndProcedure
 
 ; ----- Enable raw mode for direct terminal access ----------------------------
 ;
 ; Save the original terminal configuration and then put the terminal in a raw
 ; or uncooked configuation.
-
-Procedure enable_raw_mode()
-  If -1 = fTCGETATTR(0, orig)
+Procedure.i VT100_GET_TERMIOS(*p.tTERMIOS)
+  If -1 = fTCGETATTR(0, *p)
     Abort("Enable_Raw_Mode failed tcgetattr", Str(fERRNO()))
   EndIf
-  raw = orig
-  raw\c_iflag = raw\c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
-  raw\c_oflag = raw\c_oflag & ~(#OPOST)
-  raw\c_cflag = raw\c_cflag | (#CS8)
-  raw\c_lflag = raw\c_lflag & ~(#ECHO | #ICANON | #IEXTEN | #ISIG)
-  raw\c_cc[#VMIN] = 0       ; min number of bytes to return from read
-  raw\c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
-  If -1 = fTCSETATTR(0, #TCSAFLUSH, raw)
+  ProcedureReturn #true
+EndProcedure
+
+Procedure.i VT100_SET_RAW_MODE(*raw.tTERMIOS)
+  VT100_GET_TERMIOS(*raw)
+  *raw\c_iflag = *raw\c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
+  *raw\c_oflag = *raw\c_oflag & ~(#OPOST)
+  *raw\c_cflag = *raw\c_cflag | (#CS8)
+  *raw\c_lflag = *raw\c_lflag & ~(#ECHO | #ICANON | #IEXTEN | #ISIG)
+  *raw\c_cc[#VMIN] = 0       ; min number of bytes to return from read
+  *raw\c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
+  If -1 = fTCSETATTR(0, #TCSAFLUSH, *raw)
     Abort("Enable_Raw_Mode failed tcsetattr", Str(fERRNO()))
   EndIf
+  ProcedureReturn #true
 EndProcedure
 
 ; Cursor up 	ESC [ Pn A 
@@ -268,12 +270,11 @@ EndProcedure
 ; send failed (bytes sent = length to send), and aborts if buffer
 ; memory could not be allocated.
 
-Procedure.i Write_String(s.s)
+Procedure.i VT100_WRITE_STRING(s.s)
   Define *buf = AllocateMemory(Len(s) + 8) 
   If *buf
     FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII) 
-    Define i.i 
-    String_to_Buffer(*buf, s)
+    VT100_STRING_TO_BUFFER(*buf, s)
     Define.i sent = fWRITE(1, *buf, Len(s)) 
     Define.i err = fERRNO() 
     FreeMemory(*buf) 
@@ -296,7 +297,7 @@ EndProcedure
 ;
 ; Always returns #true.
 
-Procedure.i String_to_Buffer(*buf, s.s)
+Procedure.i VT100_STRING_TO_BUFFER(*buf, s.s)
   Define *ptr = *buf
   Define.i i
   For i = 1 To Len(s)
@@ -331,13 +332,13 @@ EndProcedure
 
 ; CSI prefixed command:
 
-Procedure.i Write_CSI_Command(s.s)
+Procedure.i VT100_WRITE_CSI(s.s)
   Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
   If *buf
     FillMemory(*buf, Len(s) + 8, #PB_ASCII)
     PokeA(*buf, $1b)
     PokeA(*buf + 1, '[')
-    String_to_Buffer(*buf + 2, s)
+    VT100_STRING_TO_BUFFER(*buf + 2, s)
     Define.i sent = fWRITE(1, *buf, Len(s) + 2)
     FreeMemory(*buf)
     If sent = Len(s) + 2
@@ -355,12 +356,12 @@ EndProcedure
 
 ; ESC prefixed command:
 
-Procedure.i Write_ESC_Command(s.s)
+Procedure.i VT100_WRITE_ESC(s.s)
   Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
   If *buf
     FillMemory(*buf, Len(s) + 8, #PB_ASCII)
     PokeA(*buf, $1b)
-    String_to_Buffer(*buf + 1, s)
+    VT100_STRING_TO_BUFFER(*buf + 1, s)
     Define.i sent = fWRITE(1, *buf, Len(s) + 1)
     If sent = Len(s) + 1
       ProcedureReturn #true
@@ -389,8 +390,8 @@ EndProcedure
 ; 
 ; The cursor position is not updated.
 
-Procedure.i Erase_Screen()
-  ProcedureReturn Write_CSI_COMMAND("2J") ; ED Erase in display
+Procedure.i VT100_ERASE_SCREEN()
+  ProcedureReturn VT100_WRITE_CSI("2J") ; ED Erase in display
 EndProcedure
 
 ; This is a CUP CUrsor Position (H). It takes the following parameters:
@@ -405,12 +406,12 @@ EndProcedure
 ; Homing the cursor is a frequent enough operation to warrant its own
 ; helper.
 
-Procedure.i Cursor_Home()
-  ProcedureReturn Write_CSI_Command("H") ; CUP Cursor position to home
+Procedure.i VT100_CURSOR_HOME()
+  ProcedureReturn VT100_WRITE_CSI("H") ; CUP Cursor position to home
 EndProcedure 
 
-Procedure.i Cursor_Position(*p.tCOORD)
-  ProcedureReturn Write_CSI_Command(Str(*p\row) + ";" + Str(*p\col) + "H")
+Procedure.i VT100_CURSOR_POSITION(*p.tCOORD)
+  ProcedureReturn VT100_WRITE_CSI(Str(*p\row) + ";" + Str(*p\col) + "H")
 EndProcedure
 
 ; These are DECSC and DECRC Save/Restore Cursor (7/8).
@@ -421,19 +422,19 @@ EndProcedure
 ; These are paired: a DECRC should have been preceeded by a DECSC.
 
 Procedure.i Save_Cursor()
-  ProcedureReturn Write_ESC_Command("7")
+  ProcedureReturn VT100_WRITE_ESC("7")
 EndProcedure
 
 Procedure.i Restore_Cursor()
-  ProcedureReturn Write_ESC_Command("8")
+  ProcedureReturn VT100_WRITE_ESC("8")
 EndProcedure
 
 ; This is RIS Reset to Initial State (c).
 ;
 ; The terminal is returned to its "just powered on" state.
 
-Procedure.i Reset_Terminal()
-  ProcedureReturn Write_ESC_Command("c")
+Procedure.i VT100_HARD_RESET()
+  ProcedureReturn VT100_WRITE_ESC("c")
 EndProcedure
 
 ; This is DSR Device Status Report active position (6n).
@@ -455,11 +456,11 @@ Procedure.i Is_Digit(c.s)
   EndIf
 EndProcedure
 
-Procedure.i Report_Cursor_Position(*p.TCOORD)
+Procedure.i VT100_REPORT_CURSOR_POSITION(*p.TCOORD)
   ; -1,-1 indicates a failure in the DSR
   *p\row = -1
   *p\col = -1
-  If Write_CSI_Command("6n") ; DSR for CPR cursor position report 6n -> r;cR
+  If VT100_WRITE_CSI("6n") ; DSR for CPR cursor position report 6n -> r;cR
     Define.a char
     Define.i i
     Define.s s
@@ -506,13 +507,13 @@ EndProcedure
 ; Report_Cursor_Position might report an error, but otherwise I don't
 ; check for one here.
 
-Procedure.i Report_Screen_Size(*p.tCOORD)
-  Write_ESC_Command("7") ; DECSC save cursor
-  Write_CSI_Command("999B") ; CUD cursor down this many
-  Write_CSI_Command("999C") ; CUF cursor forward this many
+Procedure.i VT100_REPORT_SCREEN_DIMENSIONS(*p.tCOORD)
+  VT100_WRITE_ESC("7") ; DECSC save cursor
+  VT100_WRITE_CSI("999B") ; CUD cursor down this many
+  VT100_WRITE_CSI("999C") ; CUF cursor forward this many
   *p\row = -2 : *p\col = -2 ; default to indicate error
-  Report_Cursor_Position(*p)
-  Write_ESC_Command("8") ; DECRC restore cursor
+  VT100_REPORT_CURSOR_POSITION(*p)
+  VT100_WRITE_ESC("8") ; DECRC restore cursor
   ProcedureReturn #true
 EndProcedure
 
@@ -520,11 +521,11 @@ EndProcedure
 ; defined later, for now it's the last line of the display.
 
 Procedure.i Display_Message(sev.s, msg.s)
-  Write_ESC_Command("7") ; DECSC
-  Cursor_POsition(@message_area)
-  Write_CSI_Command("K") ; EL Erase in line from cursor to eol
-  Write_String(sev + ":" + msg)
-  Write_ESC_Command("8") ; DECRC
+  VT100_WRITE_ESC("7") ; DECSC
+  VT100_CURSOR_POSITION(@message_area)
+  VT100_WRITE_CSI("K") ; EL Erase in line from cursor to eol
+  VT100_WRITE_STRING(sev + ":" + msg)
+  VT100_WRITE_ESC("8") ; DECRC
   ProcedureReturn #true
 EndProcedure
 
@@ -542,18 +543,18 @@ EndProcedure
 Procedure editor_cursor_home()
   Define.tCOORD p
   p\row = 3 : p\col = 1
-  Cursor_Position(@p)
+  VT100_CURSOR_POSITION(@p)
 EndProcedure
 
 Procedure editor_draw_rows()
-  Write_ESC_Command("7") ; DECSC save cursor
+  VT100_WRITE_ESC("7") ; DECSC save cursor
   editor_cursor_home()
-  Define row.i, col.i
+  Define.i row
   For row = 3 To screen_size\row - 3
-    Write_String(~"~\r\n")
+    VT100_WRITE_STRING(~"~\r\n")
   Next row
   ; Write_string("~") 
-  Write_ESC_Command("8") ; DECRC restore cursor
+  VT100_WRITE_ESC("8") ; DECRC restore cursor
 EndProcedure
 
 ; ----- Read a keypress and return it one byte at a time ----------------------
@@ -585,14 +586,14 @@ Procedure.i editor_process_key()
   Select c
     Case #CTRL_D ; display screen size.
       Define.tCOORD p
-      Report_Screen_Size(@p)
+      VT100_REPORT_SCREEN_DIMENSIONS(@p)
       Display_Message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_P
       Define.tCOORD p
-      Report_Cursor_Position(@p)
+      VT100_REPORT_CURSOR_POSITION(@p)
       Display_Message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_Q
-      Write_CSI_Command("10;1H") ; CUP cursor position 10 col 1
+      VT100_WRITE_CSI("10;1H") ; CUP cursor position 10 col 1
       ProcedureReturn #true
     Case 'w', 'W'
       ; Define coord.tCOORD 
@@ -627,8 +628,7 @@ Procedure.i editor_process_key()
       ; EndIf 
       ; VT100_SET_CURSOR(@coord) 
     Default
-      Define.i nop
-      nop = 0
+      ; To be provided
   EndSelect
   ProcedureReturn #false
 EndProcedure
@@ -645,19 +645,20 @@ EndProcedure
 ; settings needs better plumbing.
 
 
-enable_raw_mode()
-Report_Screen_Size(@screen_size)
+VT100_GET_TERMIOS(@original_termios)
+VT100_SET_RAW_MODE(@raw_termios)
+VT100_REPORT_SCREEN_DIMENSIONS(@screen_size)
 message_area = screen_size
 message_area\col = 1
 message_area\row = message_area\row - 1
-Erase_Screen()
+VT100_ERASE_SCREEN()
 editor_cursor_home()
 Display_Message("I", "Welcome to kilo in PureBasic!")
 Repeat
   editor_refresh_screen()
 Until editor_process_key()
 
-disable_raw_mode()
+VT100_RESTORE_MODE(@original_termios)
 
 End
 
