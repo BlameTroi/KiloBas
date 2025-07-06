@@ -162,8 +162,9 @@ EndStructure
 Global.i        retval
 Global.tTERMIOS orig
 Global.tTERMIOS raw
-Global.tCOORD   cursor
-Global.tCOORD   dimensions
+Global.tCOORD   cursor_position
+Global.tCOORD   screen_size
+Global.tCOORD   message_area
 
 ; ----- Forward declarations --------------------------------------------------
 ;
@@ -174,7 +175,7 @@ Declare   Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
 Declare.i Erase_Screen()
 Declare.i Cursor_Home()
 Declare.i Reset_Terminal()
-Declare.i Cursor_Position(row.i, col.i)
+Declare.i Cursor_Position(*coord.tCOORD)
 Declare.i Report_Cursor_Position(*coord.tCOORD)
 Declare.i Report_Screen_Size(*coord.tCOORD)
 Declare   Disable_Raw_Mode()
@@ -183,6 +184,8 @@ Declare.i Write_String(s.s)
 Declare.i String_to_Buffer(*buf, s.s)
 Declare.i Write_CSI_Command(s.s)
 Declare.i Write_ESC_Command(s.s)
+Declare.i Display_Message(sev.s, msg.s)
+Declare.i Log_Message(sev.s, msg.s)
 
 ; ----- Common error exit -----------------------------------------------------
 ;
@@ -406,8 +409,8 @@ Procedure.i Cursor_Home()
   ProcedureReturn Write_CSI_Command("H") ; CUP Cursor position to home
 EndProcedure 
 
-Procedure.i Cursor_Position(row.i, col.i)
-  ProcedureReturn Write_CSI_Command(Str(row) + ";" + Str(col) + "H")
+Procedure.i Cursor_Position(*p.tCOORD)
+  ProcedureReturn Write_CSI_Command(Str(*p\row) + ";" + Str(*p\col) + "H")
 EndProcedure
 
 ; These are DECSC and DECRC Save/Restore Cursor (7/8).
@@ -496,8 +499,33 @@ Procedure.i Report_Cursor_Position(*p.TCOORD)
   EndIf
 EndProcedure
 
+; Report screen size using CUD/CUF and then a CPR. The cursor position is
+; saved and restored across this operation. The behavior for CUP 999;999H is
+; not defined, so I use CUD/CUF instead
+;
+; Report_Cursor_Position might report an error, but otherwise I don't
+; check for one here.
+
 Procedure.i Report_Screen_Size(*p.tCOORD)
-  ProcedureReturn #false
+  Write_ESC_Command("7") ; DECSC save cursor
+  Write_CSI_Command("999B") ; CUD cursor down this many
+  Write_CSI_Command("999C") ; CUF cursor forward this many
+  *p\row = -2 : *p\col = -2 ; default to indicate error
+  Report_Cursor_Position(*p)
+  Write_ESC_Command("8") ; DECRC restore cursor
+  ProcedureReturn #true
+EndProcedure
+
+; Display the severity and text of a message. A "message area" will be
+; defined later, for now it's the last line of the display.
+
+Procedure.i Display_Message(sev.s, msg.s)
+  Write_ESC_Command("7") ; DECSC
+  Cursor_POsition(@message_area)
+  Write_CSI_Command("K") ; EL Erase in line from cursor to eol
+  Write_String(sev + ":" + msg)
+  Write_ESC_Command("8") ; DECRC
+  ProcedureReturn #true
 EndProcedure
 
 ; ----- System libraries ------------------------------------------------------
@@ -509,14 +537,22 @@ EndProcedure
 ; ----- System libraries ------------------------------------------------------
 
 ; ----- Display rows on the screen --------------------------------------------
+; The top and bottom two lines are reserved.
+
+Procedure editor_cursor_home()
+  Define.tCOORD p
+  p\row = 3 : p\col = 1
+  Cursor_Position(@p)
+EndProcedure
 
 Procedure editor_draw_rows()
   Write_ESC_Command("7") ; DECSC save cursor
+  editor_cursor_home()
   Define row.i, col.i
-  For row = 1 To 23
+  For row = 3 To screen_size\row - 3
     Write_String(~"~\r\n")
   Next row
-  Write_string("~")
+  ; Write_string("~") 
   Write_ESC_Command("8") ; DECRC restore cursor
 EndProcedure
 
@@ -548,24 +584,13 @@ Procedure.i editor_process_key()
   Define c.a = editor_read_key()
   Select c
     Case #CTRL_D ; display screen size.
-      Write_ESC_Command("7") ; DECSC save cursor
-      ; The behavior for CUP 999;999H is not defined, so CUD/CUF instead
-      Write_CSI_Command("999B") ; CUD cursor down this many
-      Write_CSI_Command("999C") ; CUF cursor forward this many
       Define.tCOORD p
-      p\row = -2 : p\col = -2
-      Report_Cursor_Position(@p)
-      Cursor_Home()
-      Write_String("   " + Str(p\row) + " x " + Str(p\col) + "   ")
-      Write_ESC_Command("8") ; DECRC restore cursor
+      Report_Screen_Size(@p)
+      Display_Message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_P
-      Write_ESC_Command("7") ; DECSC save cursor
       Define.tCOORD p
-      p\row = -2 : p\col = -2
       Report_Cursor_Position(@p)
-      Cursor_Home()
-      Write_String("   " + Str(p\row) + " x " + Str(p\col) + "   ")
-      Write_ESC_Command("8") ; DECRC restore cursor
+      Display_Message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_Q
       Write_CSI_Command("10;1H") ; CUP cursor position 10 col 1
       ProcedureReturn #true
@@ -602,15 +627,15 @@ Procedure.i editor_process_key()
       ; EndIf 
       ; VT100_SET_CURSOR(@coord) 
     Default
-      ; to be determined
-    EndSelect
-    ProcedureReturn #false
-  EndProcedure
+      Define.i nop
+      nop = 0
+  EndSelect
+  ProcedureReturn #false
+EndProcedure
 
 ; ----- Clear and repaint the screen ------------------------------------------
 
 Procedure editor_refresh_screen()
-  Cursor_Home()
   editor_draw_rows()
 EndProcedure
 
@@ -619,8 +644,15 @@ EndProcedure
 ; This is youre basic repeat until done loop. Properly restoring the terminal
 ; settings needs better plumbing.
 
+
 enable_raw_mode()
+Report_Screen_Size(@screen_size)
+message_area = screen_size
+message_area\col = 1
+message_area\row = message_area\row - 1
 Erase_Screen()
+editor_cursor_home()
+Display_Message("I", "Welcome to kilo in PureBasic!")
 Repeat
   editor_refresh_screen()
 Until editor_process_key()
