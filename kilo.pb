@@ -76,10 +76,10 @@ EnableExplicit
 ; ----- Include system library interfaces -------------------------------------
 ;
 ; I'm unclear on how to best set the include path. Here I'm assuming that
-; the libraries are in a subdirectory of this project. When these reference each
+; the libraries are in a sub directory of this project. When these reference each
 ; other they do not specify a directory. This works as I want it to so I'm
 ; not planning to use `IncludePath`.
-; files do not mentioned the subdirectory.
+; files do not mentioned the sub directory.
 
 ; System include libraries (libc):
 
@@ -144,6 +144,11 @@ Enumeration ANSI_CHARACTERS 1
   #DELETE = 127         ; DEL Delete character
 EndEnumeration
 
+; ----- The usual x,y coordinates ---------------------------------------------
+;
+; But these are y,x instead of x,y. To avoid the muscle memory confusion
+; always use row and column naming.
+
 Structure tCOORD
   row.i
   col.i
@@ -152,7 +157,7 @@ EndStructure
 ; ----- Common or global data -------------------------------------------------
 ;
 ; This needs to land in a `context` structure that is dynamically allocated, but
-; at this stage of development globals suffice.
+; at this stage of development global variables suffice.
 
 Global.i        retval
 Global.tTERMIOS orig
@@ -160,31 +165,49 @@ Global.tTERMIOS raw
 Global.tCOORD   cursor
 Global.tCOORD   dimensions
 
-; ----- Forward declaration of procedures -------------------------------------
+; ----- Forward declarations --------------------------------------------------
+;
+; Rather than try to manage just the ones I need, I'm going to declare all
+; functions here.
 
+Declare   Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
 Declare.i Erase_Screen()
-Declare.i Home_Cursor()
+Declare.i Cursor_Home()
+Declare.i Reset_Terminal()
+Declare.i Cursor_Position(row.i, col.i)
+Declare.i Report_Cursor_Position(*coord.tCOORD)
+Declare.i Report_Screen_Size(*coord.tCOORD)
+Declare   Disable_Raw_Mode()
+Declare   Enable_Raw_Mode()
+Declare.i Write_String(s.s)
+Declare.i String_to_Buffer(*buf, s.s)
+Declare.i Write_CSI_Command(s.s)
+Declare.i Write_ESC_Command(s.s)
 
-; ----- Utility functions -----------------------------------------------------
-
+; ----- Common error exit -----------------------------------------------------
+;
 ; The original code has a `die` procedure. I've created something that allows
 ; for a little more information if desired.
+;
+; Unfortunately we can't use the names of the parameters with defaults on
+; procedure calls. This parameter ordering puts the values that might be
+; overridden at the front of the list.
 
-Procedure abort(s.s, erase.i=#true, extra.s="", rc.i=-1)
+Procedure Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
   If erase
     Erase_Screen()
-    Home_Cursor()
+    Cursor_Home()
+    Disable_Raw_Mode()
+  ElseIf reset
+    Reset_Terminal()
   EndIf
   PrintN("")
-  PrintN("!Abort! " + s)
+  PrintN("kilo.pb fatal error!")
+  PrintN(" Message: " + s)
   If extra <> ""
-    PrintN(extra)
+    PrintN(" Extra  : " + extra)
   EndIf
   End rc
-EndProcedure
-
-Procedure die(s.s)
-  abort(s.s)
 EndProcedure
 
 ; ----- Disable raw mode/restore prior saved terminal configuration -----------
@@ -194,10 +217,10 @@ EndProcedure
 ; declaration with either `C` or `Dll` to force the correct ABI but I haven't
 ; yooet.
 
-Procedure disable_raw_mode()
-  if -1 = fTCSETATTR(0, #TCSAFLUSH, orig)
-    die("disable_raw_mode-tcsetattr")
-  endif
+Procedure Disable_Raw_Mode()
+  If -1 = fTCSETATTR(0, #TCSAFLUSH, orig)
+    Abort("Disable_Raw_Mode failed tcsetattr", Str(fERRNO()))
+  Endif
 EndProcedure
 
 ; ----- Enable raw mode for direct terminal access ----------------------------
@@ -207,7 +230,7 @@ EndProcedure
 
 Procedure enable_raw_mode()
   If -1 = fTCGETATTR(0, orig)
-    die("enable_raw_mode-tcgetattr")
+    Abort("Enable_Raw_Mode failed tcgetattr", Str(fERRNO()))
   EndIf
   raw = orig
   raw\c_iflag = raw\c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
@@ -217,7 +240,7 @@ Procedure enable_raw_mode()
   raw\c_cc[#VMIN] = 0       ; min number of bytes to return from read
   raw\c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
   If -1 = fTCSETATTR(0, #TCSAFLUSH, raw)
-    die("enable_raw_mode-tcsetattr")
+    Abort("Enable_Raw_Mode failed tcsetattr", Str(fERRNO()))
   EndIf
 EndProcedure
 
@@ -227,42 +250,48 @@ EndProcedure
 ; Cursor backward (left) 	ESC [ Pn D 
 ; Send data to the terminal.
 ;
-; Raw text can be sent after marshalling out of the string and into
-; an Ascii byte buffer. Commands are text with some prefix as defined
+; Raw text can be sent after marshaling out of the string and into
+; an Ascii byte buffer.
+;
+; Commands are text with some prefix as defined
 ; in the VT100 terminal specification. 
 ;
-; There are four prefixes:
+
+; ----- Write a string to the terminal ----------------------------------------
 ;
-; ESC - sequence starting with ESC (\x1B)
-; CSI - Control Sequence Introducer: sequence starting with ESC [ or CSI (\x9B)
-; DCS - Device Control String: sequence starting with ESC P or DCS (\x90)
-; OSC - Operating System Command: sequence starting with ESC ] or OSC (\x9D)
+; To avoid any unicode/utf issues I'm build a string of ascii bytes.
 ;
-; Where there are multiple prefix options I will use the ESC [ P ] variants.
+; Returns #true if the message was sent correctly, #false if the
+; send failed (bytes sent = length to send), and aborts if buffer
+; memory could not be allocated.
 
 Procedure.i Write_String(s.s)
   Define *buf = AllocateMemory(Len(s) + 8) 
   If *buf
     FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII) 
     Define i.i 
-    Define *ptr = *buf 
-    For i = 1 To Len(s) 
-      PokeA(*ptr, Asc(Mid(s, i, 1))) 
-      *ptr = *ptr + 1 
-    Next i 
-    Define sent.i = fWRITE(1, *buf, Len(s)) 
-    Define err.i = fERRNO() 
+    String_to_Buffer(*buf, s)
+    Define.i sent = fWRITE(1, *buf, Len(s)) 
+    Define.i err = fERRNO() 
     FreeMemory(*buf) 
     If sent = Len(s)
       ProcedureReturn #true
     EndIf
     ; What error checking could be done here?
     ProcedureReturn #false
+  Else
+    ; A fatal error.
+    Abort("Write_String AllocateMemory failed", Str(fERRNO()))
+    ProcedureReturn #false ; never executed
   EndIf
-  ; This is a different error
-  ; we should report and exits program as the memory alloc failed
-  ProcedureReturn #false
 EndProcedure
+
+; ----- Copy a native string into a C string ----------------------------------
+;
+; This is a very trusting routine. It makes no overflow checks. As the
+; caller provides the buffer, the length verification is its responsibility.
+;
+; Always returns #true.
 
 Procedure.i String_to_Buffer(*buf, s.s)
   Define *ptr = *buf
@@ -274,6 +303,30 @@ Procedure.i String_to_Buffer(*buf, s.s)
   PokeA(*ptr, 0) ; this is not strictly needed
   ProcedureReturn #true
 EndProcedure
+
+; ----- Issue terminal commands with any required prefix ---------------------
+;
+; Terminal commands have a very consistent format.
+;
+; PREFIX PARAMETERS COMMAND
+;
+; PREFIX is one of the four options listed below.
+;
+; PARAMETERS are optional ASCII numeric strings separated by semicolons.
+;
+; COMMAND is usually a single alphabetic character (case sensitive).
+;
+; There are four prefixes. I don't know why there are so many options, but
+; it is what is is.
+;
+; ESC - sequence starting with ESC (\x1B)
+; CSI - Control Sequence Introducer: sequence starting with ESC [ or CSI (\x9B)
+; DCS - Device Control String: sequence starting with ESC P or DCS (\x90)
+; OSC - Operating System Command: sequence starting with ESC ] or OSC (\x9D)
+;
+; Where there are multiple prefix options I will use the ESC [ P ] variants.
+
+; CSI prefixed command:
 
 Procedure.i Write_CSI_Command(s.s)
   Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
@@ -291,10 +344,13 @@ Procedure.i Write_CSI_Command(s.s)
       ProcedureReturn #false
     EndIf
   Else
-    ; error on allocate
-    ProcedureReturn #false
-  Endif
+    ; A fatal error.
+    Abort("Write_CSI_Command AllocateMemory failed", Str(fERRNO()))
+    ProcedureReturn #false ; never executed
+  EndIf
 EndProcedure
+
+; ESC prefixed command:
 
 Procedure.i Write_ESC_Command(s.s)
   Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
@@ -310,27 +366,140 @@ Procedure.i Write_ESC_Command(s.s)
       ProcedureReturn #false
     EndIf
   Else
-    ; error on allocate
-    ProcedureReturn #false
-  Endif
+    ; A fatal error.
+    Abort("Write_ESC_Command AllocateMemory failed", Str(fERRNO()))
+    ProcedureReturn #false ; never executed
+  EndIf
 EndProcedure
 
-; ----- System libraries ------------------------------------------------------
+; Neither DCS nor OSC have been needed yet so there is no support
+; for them.
+
+; ----- Mnemonic helper functions for various commands ------------------------
+
+; This is an ED Erase in Display (J). It takes the following parameters:
+;
+; <NULL> Same as 0.
+;      0 Erase from the active position to end of display.
+;      1 Erase from start of the display to the active position.
+;      2 Erase the entire screen.
+; 
+; The cursor position is not updated.
 
 Procedure.i Erase_Screen()
   ProcedureReturn Write_CSI_COMMAND("2J") ; ED Erase in display
-  ; "0J" or "J" from active position to end of display
-  ; "1J" erase from start of display to active position
-  ; "2J" entire screen
-  ; none of these change the cursor position
 EndProcedure
 
-Procedure.i Home_Cursor()
+; This is a CUP CUrsor Position (H). It takes the following parameters:
+;
+;  <NULL> Move cursor to home
+;     1;1 Move cursor to home
+; ROW;COL Move cursor to that ROW and COLUMN.
+;
+; ROW and COLUMN appear to be consistently one based. This can be changed
+; but I'm comfortable assuming the default.
+;
+; Homing the cursor is a frequent enough operation to warrant its own
+; helper.
+
+Procedure.i Cursor_Home()
   ProcedureReturn Write_CSI_Command("H") ; CUP Cursor position to home
-  ; r;cH which should be one based, if paraemters are omitted
-  ; then topmost leftmost. 0;0H and 1;1H should be equivalent
 EndProcedure 
-; ----- System libraries ------------------------------------------------------
+
+Procedure.i Cursor_Position(row.i, col.i)
+  ProcedureReturn Write_CSI_Command(Str(row) + ";" + Str(col) + "H")
+EndProcedure
+
+; These are DECSC and DECRC Save/Restore Cursor (7/8).
+;
+; Save or Restore the Cursor's position along with the graphic rendition (SGR) and character
+; set (SGS).
+;
+; These are paired: a DECRC should have been preceeded by a DECSC.
+
+Procedure.i Save_Cursor()
+  ProcedureReturn Write_ESC_Command("7")
+EndProcedure
+
+Procedure.i Restore_Cursor()
+  ProcedureReturn Write_ESC_Command("8")
+EndProcedure
+
+; This is RIS Reset to Initial State (c).
+;
+; The terminal is returned to its "just powered on" state.
+
+Procedure.i Reset_Terminal()
+  ProcedureReturn Write_ESC_Command("c")
+EndProcedure
+
+; This is DSR Device Status Report active position (6n).
+;
+; There are multiple possible DSR requests. I believe the only one I need is
+; the current cursor position. The response is a CPR Cursor Position Report.
+; Its format is ESC [ row;col R.
+;
+; This may be the only place I need to parse a response so the parse code
+; has not been factored out.
+;
+; The response values are returned via inout parameters.
+
+Procedure.i Is_Digit(c.s)
+  If Len(c) = 1 And c >= "0" And c <= "9"
+    ProcedureReturn #true
+  Else
+    ProcedureReturn #false
+  EndIf
+EndProcedure
+
+Procedure.i Report_Cursor_Position(*p.TCOORD)
+  ; -1,-1 indicates a failure in the DSR
+  *p\row = -1
+  *p\col = -1
+  If Write_CSI_Command("6n") ; DSR for CPR cursor position report 6n -> r;cR
+    Define.a char
+    Define.i i
+    Define.s s
+    ; Read a character at a time until we do not get a character (a time out
+    ; on the wait) or the character received is the end makr for the CPR.
+    While fREAD(0, @char, 1)
+      s = s + Chr(char)
+      If char = 'R'
+        Break
+      EndIf
+    Wend
+    ; Does this appear to be a valid CPR? \e[#;#R?
+    ; No real error checking in here once we decide the response looks valid.
+    If Len(s) >= 6 And Left(s, 1) = Chr($1b) And Right(s, 1) = "R"
+      ; Collect row (digits up to the ;).
+      *p\row = 0
+      i = 3
+      While Is_Digit(Mid(s, i, 1))
+        *p\row = *p\row * 10 + Val(Mid(s, i, 1))
+        i = i + 1
+      Wend
+      ; Skip past the assumed ; and collect the column (digits up to the R).
+      *p\col = 0
+      i = i + 1
+      While Is_Digit(Mid(s, i, 1))
+        *p\col = *p\col * 10 + Val(Mid(s, i, 1))
+        i = i + 1
+      Wend
+      ProcedureReturn #true
+    Else
+      ; Invalid CPR format.
+      ProcedureReturn #false
+    EndIf
+  Else
+    ; Error in DSR.
+    ProcedureReturn #false
+  EndIf
+EndProcedure
+
+Procedure.i Report_Screen_Size(*p.tCOORD)
+  ProcedureReturn #false
+EndProcedure
+
 ; ----- System libraries ------------------------------------------------------
 ; ----- System libraries ------------------------------------------------------
 ; ----- System libraries ------------------------------------------------------
@@ -364,7 +533,7 @@ Procedure.a editor_read_key()
     If n = -1
       Define e.i = fERRNO()
       If e <> #EAGAIN
-        die("Mainline-read-" + Str(e))
+        Abort("Editor_Read_Key", Str(e))
       Else
         n = 0
       Endif
@@ -378,66 +547,25 @@ EndProcedure
 Procedure.i editor_process_key()
   Define c.a = editor_read_key()
   Select c
-    Case #CTRL_D
+    Case #CTRL_D ; display screen size.
       Write_ESC_Command("7") ; DECSC save cursor
       ; The behavior for CUP 999;999H is not defined, so CUD/CUF instead
-      Write_CSI_COMMAND("999B") ; CUD cursor down this many
+      Write_CSI_Command("999B") ; CUD cursor down this many
       Write_CSI_Command("999C") ; CUF cursor forward this many
-      Write_CSI_Command("6n") ; CPR cursor position report 6n -> r;cR
-      Define.a char
-      Define.i i
-      Define.s s
-      While fREAD(0, @char, 1)
-        s = s + Chr(char)
-        If char = 'R'
-          Break
-        EndIf
-      Wend
-      Home_Cursor()
-      If Left(s, 1) = Chr($1b) And Right(s, 1) = "R"
-        Write_String("   " + Right(s, Len(s) - 1) + "   ")
-        Define.s t = ~"\r\n"
-        For i = 1 To Len(s)
-          t = t + ~"\r\n   "
-          ; Define.a b 
-          ; b = Asc(Mid(s, i, 1)) 
-          Define.a b = Asc(Mid(s, i, 1))
-          If fISCNTRL(b)
-            t = t + "?"
-          Else
-            t = t + Chr(b)
-          EndIf
-        Next i
-        Write_String(t)
-      Else
-        Write_String("ERROR ON RESPONSE TO GET CURSOR")
-      EndIf
+      Define.tCOORD p
+      p\row = -2 : p\col = -2
+      Report_Cursor_Position(@p)
+      Cursor_Home()
+      Write_String("   " + Str(p\row) + " x " + Str(p\col) + "   ")
       Write_ESC_Command("8") ; DECRC restore cursor
     Case #CTRL_P
-      Write_CSI_Command("6n") ; CPR cursor position report 6n -> r;cR
-      Define.a char
-      Define.i i
-      Define.s s
-      While fREAD(0, @char, 1)
-        s = s + Chr(char)
-        If char = 'R'
-          Break
-        EndIf
-      Wend
-      Home_Cursor()
-      If Left(s, 1) = Chr($1b) And Right(s, 1) = "R"
-        Write_String("   " + Right(s, Len(s) - 1) + "   ")
-        ; For i = 1 To Len(s) 
-        ;   Define.a b = Asc(Mid(s, i, 1))
-        ;   If fISCNTRL(b) 
-        ;     Print("?") 
-        ;   Else 
-        ;     Print(Chr(b)) 
-        ;   EndIf 
-        ; Next i 
-      Else
-        Write_String("ERROR ON RESPONSE TO GET CURSOR")
-      EndIf
+      Write_ESC_Command("7") ; DECSC save cursor
+      Define.tCOORD p
+      p\row = -2 : p\col = -2
+      Report_Cursor_Position(@p)
+      Cursor_Home()
+      Write_String("   " + Str(p\row) + " x " + Str(p\col) + "   ")
+      Write_ESC_Command("8") ; DECRC restore cursor
     Case #CTRL_Q
       Write_CSI_Command("10;1H") ; CUP cursor position 10 col 1
       ProcedureReturn #true
@@ -482,11 +610,14 @@ Procedure.i editor_process_key()
 ; ----- Clear and repaint the screen ------------------------------------------
 
 Procedure editor_refresh_screen()
-  Home_Cursor()
+  Cursor_Home()
   editor_draw_rows()
 EndProcedure
 
 ; ----- Mainline driver -------------------------------------------------------
+;
+; This is youre basic repeat until done loop. Properly restoring the terminal
+; settings needs better plumbing.
 
 enable_raw_mode()
 Erase_Screen()
@@ -498,4 +629,4 @@ disable_raw_mode()
 
 End
 
-; kilo.pb ends here.
+; kilo.pb ends here -----------------------------------------------------------
