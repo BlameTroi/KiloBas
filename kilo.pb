@@ -25,7 +25,7 @@ EnableExplicit
 ; yet--PureBasic provides an excellent interface to C code.
 ;
 ; So far everything I have needed is found in `libc`, which is `libc.dylib`
-; on MacOS.
+; on macOS.
 ;
 ; I'm creating PureBasic Includes (*.pbi) for system functions that I need now
 ; or might want in the future. These parallel the standard C include files. The
@@ -41,12 +41,12 @@ EnableExplicit
 ; This code is by me and for my use only. There are no OS or Compiler version
 ; checks in either the main project or in the common library includes.
 ;
-; This is running on a MacOS desktop in 2025.
+; This is running on a macOS desktop in 2025.
 
 ; ----- Bugs, notes, and quirks -----------------------------------------------
 ;
 ; * The tutorial suggested piping data on stdin as a way to force an error
-;   return from get and set attr. On MacOS this results in a segmentation
+;   return from get and set attr. On macOS this results in a segmentation
 ;   fault. I could check on the device using `istty` but that isn't really
 ;   needed.
 ;
@@ -72,16 +72,18 @@ EnableExplicit
 ;   Else
 ;     do error things and exit
 ;   EndIf
+;
+; This gets a bit odd feeling when there are multiple error paths to deal
+; with.
 
 ; ----- Include system library interfaces -------------------------------------
 ;
-; I'm unclear on how to best set the include path. Here I'm assuming that
-; the libraries are in a sub directory of this project. When these reference each
-; other they do not specify a directory. This works as I want it to so I'm
-; not planning to use `IncludePath`.
-; files do not mentioned the sub directory.
+; I'm unclear on how to best set the include path. Here I'm assuming that the
+; libraries are in a sub directory of this project. When these reference each
+; other they do not specify a directory. This works as I want it to so I'm not
+; planning to use `IncludePath`.
 ;
-; I expect to break this as I start making a set of my own libraries indepdent
+; I expect to break this as I start making a set of my own libraries independent
 ; from the system libraries. I want to have a txblib separate from syslib. When
 ; I start on that I'll have some untangling to do.
 
@@ -99,7 +101,7 @@ XIncludeFile "syslib/unistd.pbi"
 ; XIncludeFile "syslib/vt100.pbi" ; removing for a bit
 
 
-; ----- Keypress and response mapping -----------------------------------------
+; ----- Key press and response mapping ----------------------------------------
 ;
 ; I couldn't come up with a better way to generate the control character
 ; constants so enumeration it is. I'm adding the VT100/ANSI interpretation of
@@ -115,7 +117,7 @@ Enumeration ANSI_CHARACTERS 1
   #CTRL_E
   #CTRL_F
   #CTRL_G               ; BEL Terminal bell       \b
-  #CTRL_H               ; BS  Basckspace          \b
+  #CTRL_H               ; BS  Backspace           \b
   #CTRL_I               ; HT  Horizontal tab      \t
   #CTRL_J               ; LF  Linefeed (newline)  \n
   #CTRL_K               ; VT  Vertical tab        \v
@@ -140,8 +142,8 @@ EndEnumeration
 
 ; ----- The usual x,y coordinates ---------------------------------------------
 ;
-; But these are y,x instead of x,y. To avoid the muscle memory confusion
-; always use row and column naming.
+; But these are y,x instead of x,y. To avoid the muscle memory confusion always
+; use row and column naming.
 
 Structure tCOORD
   row.i
@@ -150,15 +152,15 @@ EndStructure
 
 ; ----- Common or global data -------------------------------------------------
 ;
-; This needs to land in a `context` structure that is dynamically allocated, but
-; at this stage of development global variables suffice.
+; This needs to land in a `context` structure that is dynamically allocated,
+; but at this stage of development global variables suffice.
 
-Global.i        retval
-Global.tTERMIOS original_termios
-Global.tTERMIOS raw_termios
-Global.tCOORD   cursor_position
-Global.tCOORD   screen_size
-Global.tCOORD   message_area
+Global.tCOORD   cursor_position     ; current position
+Global.tCOORD   screen_size         ; dimensions of physical screen
+Global.tCOORD   message_area        ; start of message output area
+
+Global.tTERMIOS original_termios    ; saved to restore at exit
+Global.tTERMIOS raw_termios         ; not really used after set, kept for reference
 
 ; ----- Forward declarations --------------------------------------------------
 ;
@@ -178,10 +180,10 @@ Declare.i VT100_REPORT_SCREEN_DIMENSIONS(*coord.tCOORD)
 Declare.i VT100_WRITE_CSI(s.s)
 Declare.i VT100_WRITE_ESC(s.s)
 Declare.i VT100_WRITE_STRING(s.s)
-
 Declare.i VT100_STRING_TO_bUFFER(*buf, s.s)
+
 Declare   Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
-Declare.i Display_Message(sev.s, msg.s)
+Declare.i EDITOR_DISPLAY_MESSAGE(sev.s, msg.s)
 Declare.i Log_Message(sev.s, msg.s)
 
 ; ----- Common error exit -----------------------------------------------------
@@ -214,24 +216,19 @@ EndProcedure
 ;
 ; The code in the C `main` uses `atexit` to ensure that disable_raw_mode is
 ; called. I believe I can do this in PureBasic by decorating the Procedure
-; declaration with either `C` or `Dll` to force the correct ABI but I haven't
-; yooet.
+; declaration with either `C` or `Dll` to force the correct ABI.
+
+Procedure.i VT100_GET_TERMIOS(*p.tTERMIOS)
+  If -1 = fTCGETATTR(0, *p)
+    Abort("Enable_Raw_Mode failed tcgetattr", Str(fERRNO()))
+  EndIf
+  ProcedureReturn #true
+EndProcedure
 
 Procedure VT100_RESTORE_MODE(*p.tTERMIOS)
   If -1 = fTCSETATTR(0, #TCSAFLUSH, *p)
     Abort("Disable_Raw_Mode failed tcsetattr", Str(fERRNO()))
   Endif
-  ProcedureReturn #true
-EndProcedure
-
-; ----- Enable raw mode for direct terminal access ----------------------------
-;
-; Save the original terminal configuration and then put the terminal in a raw
-; or uncooked configuation.
-Procedure.i VT100_GET_TERMIOS(*p.tTERMIOS)
-  If -1 = fTCGETATTR(0, *p)
-    Abort("Enable_Raw_Mode failed tcgetattr", Str(fERRNO()))
-  EndIf
   ProcedureReturn #true
 EndProcedure
 
@@ -249,35 +246,34 @@ Procedure.i VT100_SET_RAW_MODE(*raw.tTERMIOS)
   ProcedureReturn #true
 EndProcedure
 
-; Cursor up 	ESC [ Pn A 
-; Cursor down 	ESC [ Pn B 
-; Cursor forward (right) 	ESC [ Pn C 
-; Cursor backward (left) 	ESC [ Pn D 
+; Cursor up 	ESC [ Pn A
+; Cursor down 	ESC [ Pn B
+; Cursor forward (right) 	ESC [ Pn C
+; Cursor backward (left) 	ESC [ Pn D
 ; Send data to the terminal.
 ;
-; Raw text can be sent after marshaling out of the string and into
-; an Ascii byte buffer.
+; Raw text can be sent after marshaling out of the string and into an ASCII
+; byte buffer.
 ;
-; Commands are text with some prefix as defined
-; in the VT100 terminal specification. 
-;
+; Commands are text with some prefix as defined in the VT100 terminal
+; specification.
 
 ; ----- Write a string to the terminal ----------------------------------------
 ;
-; To avoid any unicode/utf issues I'm build a string of ascii bytes.
+; To avoid any Unicode/UTF-8 issues I'm build a string of ASCII bytes.
 ;
-; Returns #true if the message was sent correctly, #false if the
-; send failed (bytes sent = length to send), and aborts if buffer
-; memory could not be allocated.
+; Returns #true if the message was sent correctly, #false if the send failed
+; (bytes sent = length to send), and aborts if buffer memory could not be
+; allocated.
 
 Procedure.i VT100_WRITE_STRING(s.s)
-  Define *buf = AllocateMemory(Len(s) + 8) 
+  Define *buf = AllocateMemory(Len(s) + 8)
   If *buf
-    FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII) 
+    FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII)
     VT100_STRING_TO_BUFFER(*buf, s)
-    Define.i sent = fWRITE(1, *buf, Len(s)) 
-    Define.i err = fERRNO() 
-    FreeMemory(*buf) 
+    Define.i sent = fWRITE(1, *buf, Len(s))
+    Define.i err = fERRNO()
+    FreeMemory(*buf)
     If sent = Len(s)
       ProcedureReturn #true
     EndIf
@@ -292,8 +288,8 @@ EndProcedure
 
 ; ----- Copy a native string into a C string ----------------------------------
 ;
-; This is a very trusting routine. It makes no overflow checks. As the
-; caller provides the buffer, the length verification is its responsibility.
+; This is a very trusting routine. It makes no overflow checks. As the caller
+; provides the buffer, the length verification is its responsibility.
 ;
 ; Always returns #true.
 
@@ -376,8 +372,7 @@ Procedure.i VT100_WRITE_ESC(s.s)
   EndIf
 EndProcedure
 
-; Neither DCS nor OSC have been needed yet so there is no support
-; for them.
+; DCS and OSC are not implemented.
 
 ; ----- Mnemonic helper functions for various commands ------------------------
 
@@ -387,7 +382,7 @@ EndProcedure
 ;      0 Erase from the active position to end of display.
 ;      1 Erase from start of the display to the active position.
 ;      2 Erase the entire screen.
-; 
+;
 ; The cursor position is not updated.
 
 Procedure.i VT100_ERASE_SCREEN()
@@ -400,15 +395,14 @@ EndProcedure
 ;     1;1 Move cursor to home
 ; ROW;COL Move cursor to that ROW and COLUMN.
 ;
-; ROW and COLUMN appear to be consistently one based. This can be changed
-; but I'm comfortable assuming the default.
+; ROW and COLUMN appear to be consistently one based. This can be changed but
+; I'm comfortable assuming the default.
 ;
-; Homing the cursor is a frequent enough operation to warrant its own
-; helper.
+; Homing the cursor is a frequent enough operation to warrant its own helper.
 
 Procedure.i VT100_CURSOR_HOME()
   ProcedureReturn VT100_WRITE_CSI("H") ; CUP Cursor position to home
-EndProcedure 
+EndProcedure
 
 Procedure.i VT100_CURSOR_POSITION(*p.tCOORD)
   ProcedureReturn VT100_WRITE_CSI(Str(*p\row) + ";" + Str(*p\col) + "H")
@@ -416,16 +410,16 @@ EndProcedure
 
 ; These are DECSC and DECRC Save/Restore Cursor (7/8).
 ;
-; Save or Restore the Cursor's position along with the graphic rendition (SGR) and character
-; set (SGS).
+; Save or Restore the Cursor's position along with the graphic rendition (SGR)
+; and character set (SGS).
 ;
-; These are paired: a DECRC should have been preceeded by a DECSC.
+; These are paired: a DECRC should have been preceded by a DECSC.
 
-Procedure.i Save_Cursor()
+Procedure.i VT100_CURSOR_SAVE()
   ProcedureReturn VT100_WRITE_ESC("7")
 EndProcedure
 
-Procedure.i Restore_Cursor()
+Procedure.i VT100_CURSOR_RESTORE()
   ProcedureReturn VT100_WRITE_ESC("8")
 EndProcedure
 
@@ -446,7 +440,7 @@ EndProcedure
 ; This may be the only place I need to parse a response so the parse code
 ; has not been factored out.
 ;
-; The response values are returned via inout parameters.
+; The response values are returned via in/out parameters.
 
 Procedure.i Is_Digit(c.s)
   If Len(c) = 1 And c >= "0" And c <= "9"
@@ -465,15 +459,15 @@ Procedure.i VT100_REPORT_CURSOR_POSITION(*p.TCOORD)
     Define.i i
     Define.s s
     ; Read a character at a time until we do not get a character (a time out
-    ; on the wait) or the character received is the end makr for the CPR.
+    ; on the wait) or the character received is the end marker for the CPR.
     While fREAD(0, @char, 1)
       s = s + Chr(char)
       If char = 'R'
         Break
       EndIf
     Wend
-    ; Does this appear to be a valid CPR? \e[#;#R?
-    ; No real error checking in here once we decide the response looks valid.
+    ; Does this appear to be a valid CPR? \e[#;#R? There is no error checking
+    ; beyond this.
     If Len(s) >= 6 And Left(s, 1) = Chr($1b) And Right(s, 1) = "R"
       ; Collect row (digits up to the ;).
       *p\row = 0
@@ -500,12 +494,12 @@ Procedure.i VT100_REPORT_CURSOR_POSITION(*p.TCOORD)
   EndIf
 EndProcedure
 
-; Report screen size using CUD/CUF and then a CPR. The cursor position is
-; saved and restored across this operation. The behavior for CUP 999;999H is
-; not defined, so I use CUD/CUF instead
+; Report screen size using CUD/CUF and then a CPR. The cursor position is saved
+; and restored across this operation. The behavior for CUP 999;999H is not
+; defined, so I use CUD/CUF instead
 ;
-; Report_Cursor_Position might report an error, but otherwise I don't
-; check for one here.
+; Report_Cursor_Position might report an error, but otherwise I don't check for
+; one here.
 
 Procedure.i VT100_REPORT_SCREEN_DIMENSIONS(*p.tCOORD)
   VT100_WRITE_ESC("7") ; DECSC save cursor
@@ -517,10 +511,10 @@ Procedure.i VT100_REPORT_SCREEN_DIMENSIONS(*p.tCOORD)
   ProcedureReturn #true
 EndProcedure
 
-; Display the severity and text of a message. A "message area" will be
-; defined later, for now it's the last line of the display.
+; Display the severity and text of a message. A "message area" will be defined
+; later, for now it's the last line of the display.
 
-Procedure.i Display_Message(sev.s, msg.s)
+Procedure.i EDITOR_DISPLAY_MESSAGE(sev.s, msg.s)
   VT100_WRITE_ESC("7") ; DECSC
   VT100_CURSOR_POSITION(@message_area)
   VT100_WRITE_CSI("K") ; EL Erase in line from cursor to eol
@@ -538,9 +532,10 @@ EndProcedure
 ; ----- System libraries ------------------------------------------------------
 
 ; ----- Display rows on the screen --------------------------------------------
-; The top and bottom two lines are reserved.
+;
+; The top and bottom two rows are reserved.
 
-Procedure editor_cursor_home()
+Procedure EDITOR_CURSOR_HOME()
   Define.tCOORD p
   p\row = 3 : p\col = 1
   VT100_CURSOR_POSITION(@p)
@@ -548,21 +543,21 @@ EndProcedure
 
 Procedure editor_draw_rows()
   VT100_WRITE_ESC("7") ; DECSC save cursor
-  editor_cursor_home()
+  EDITOR_CURSOR_HOME()
   Define.i row
   For row = 3 To screen_size\row - 3
     VT100_WRITE_STRING(~"~\r\n")
   Next row
-  ; Write_string("~") 
+  ; Write_string("~")
   VT100_WRITE_ESC("8") ; DECRC restore cursor
 EndProcedure
 
-; ----- Read a keypress and return it one byte at a time ----------------------
+; ----- Read a key press and return it one byte at a time ---------------------
 ;
-; On MacOS read doesn't mark no input as a hard error so check for nothing
-; read and handle as if we got an error return flagged #EAGAIN
+; On macOS read doesn't mark no input as a hard error so check for nothing read
+; and handle as if we got an error return flagged #EAGAIN
 
-Procedure.a editor_read_key()
+Procedure.a EDITOR_READ_KEY()
   Define n.i
   Define c.a
   Repeat
@@ -579,54 +574,54 @@ Procedure.a editor_read_key()
   ProcedureReturn c
 EndProcedure
 
-; ----- Handle keypress -------------------------------------------------------
+; ----- Handle key press ------------------------------------------------------
 
-Procedure.i editor_process_key()
-  Define c.a = editor_read_key()
+Procedure.i EDITOR_PROCESS_KEY()
+  Define c.a = EDITOR_READ_KEY()
   Select c
     Case #CTRL_D ; display screen size.
       Define.tCOORD p
       VT100_REPORT_SCREEN_DIMENSIONS(@p)
-      Display_Message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col))
+      EDITOR_DISPLAY_MESSAGE("I", "Screen size: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_P
       Define.tCOORD p
       VT100_REPORT_CURSOR_POSITION(@p)
-      Display_Message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col))
+      EDITOR_DISPLAY_MESSAGE("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_Q
       VT100_WRITE_CSI("10;1H") ; CUP cursor position 10 col 1
       ProcedureReturn #true
     Case 'w', 'W'
-      ; Define coord.tCOORD 
-      ; VT100_GET_CURSOR(@coord) 
-      ; coord\row = coord\row - 1 
-      ; If coord\row < 1 
-      ;   coord\row = 23 
-      ; EndIf 
-      ; VT100_SET_CURSOR(@coord) 
+      ; Define coord.tCOORD
+      ; VT100_GET_CURSOR(@coord)
+      ; coord\row = coord\row - 1
+      ; If coord\row < 1
+      ;   coord\row = 23
+      ; EndIf
+      ; VT100_SET_CURSOR(@coord)
     Case 'a', 'A'
-      ; Define coord.tCOORD 
-      ; VT100_GET_CURSOR(@coord) 
-      ; coord\col = coord\col - 1 
-      ; If coord\col < 1 
-      ;   coord\col = 79 
-      ; EndIf 
-      ; VT100_SET_CURSOR(@coord) 
+      ; Define coord.tCOORD
+      ; VT100_GET_CURSOR(@coord)
+      ; coord\col = coord\col - 1
+      ; If coord\col < 1
+      ;   coord\col = 79
+      ; EndIf
+      ; VT100_SET_CURSOR(@coord)
     Case 's', 'S'
-      ; Define coord.tCOORD 
-      ; VT100_GET_CURSOR(@coord) 
-      ; coord\row = coord\row + 1 
-      ; If coord\row > 23 
-      ;   coord\row = 1 
-      ; EndIf 
-      ; VT100_SET_CURSOR(@coord) 
+      ; Define coord.tCOORD
+      ; VT100_GET_CURSOR(@coord)
+      ; coord\row = coord\row + 1
+      ; If coord\row > 23
+      ;   coord\row = 1
+      ; EndIf
+      ; VT100_SET_CURSOR(@coord)
     Case 'd', 'D'
-      ; Define coord.tCOORD 
-      ; VT100_GET_CURSOR(@coord) 
-      ; coord\row = coord\col - 1 
-      ; If coord\col < 1 
-      ;   coord\col = 23 
-      ; EndIf 
-      ; VT100_SET_CURSOR(@coord) 
+      ; Define coord.tCOORD
+      ; VT100_GET_CURSOR(@coord)
+      ; coord\row = coord\col - 1
+      ; If coord\col < 1
+      ;   coord\col = 23
+      ; EndIf
+      ; VT100_SET_CURSOR(@coord)
     Default
       ; To be provided
   EndSelect
@@ -635,13 +630,13 @@ EndProcedure
 
 ; ----- Clear and repaint the screen ------------------------------------------
 
-Procedure editor_refresh_screen()
+Procedure EDITOR_REFRESH_SCREEN()
   editor_draw_rows()
 EndProcedure
 
 ; ----- Mainline driver -------------------------------------------------------
 ;
-; This is youre basic repeat until done loop. Properly restoring the terminal
+; This is your basic repeat until done loop. Properly restoring the terminal
 ; settings needs better plumbing.
 
 
@@ -652,11 +647,11 @@ message_area = screen_size
 message_area\col = 1
 message_area\row = message_area\row - 1
 VT100_ERASE_SCREEN()
-editor_cursor_home()
-Display_Message("I", "Welcome to kilo in PureBasic!")
+EDITOR_CURSOR_HOME()
+EDITOR_DISPLAY_MESSAGE("I", "Welcome to kilo in PureBasic!")
 Repeat
-  editor_refresh_screen()
-Until editor_process_key()
+  EDITOR_REFRESH_SCREEN()
+Until EDITOR_PROCESS_KEY()
 
 VT100_RESTORE_MODE(@original_termios)
 
