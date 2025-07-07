@@ -166,6 +166,72 @@ Global.tCOORD   message_area        ; start of message output area
 Global.tTERMIOS original_termios    ; saved to restore at exit
 Global.tTERMIOS raw_termios         ; not really used after set, kept for reference
 
+; ----- Macros for some of the simple VT100 commands --------------------------
+;
+; This is an ED Erase in Display (J). It takes the following parameters:
+;
+; <NULL> Same as 0.
+;      0 Erase from the active position to end of display.
+;      1 Erase from start of the display to the active position.
+;      2 Erase the entire screen.
+;
+; The cursor position is not updated.
+
+Macro VT100_ERASE_SCREEN
+  VT100_WRITE_CSI("2J")
+EndMacro
+
+; This is a CUP CUrsor Position (H). It takes the following parameters:
+;
+;  <NULL> Move cursor to home
+;     1;1 Move cursor to home
+; ROW;COL Move cursor to that ROW and COLUMN.
+;
+; ROW and COLUMN appear to be consistently one based. This can be changed but
+; I'm comfortable assuming the default.
+;
+; Homing the cursor is a frequent enough operation to warrant its own helper.
+
+Macro VT100_CURSOR_HOME
+  VT100_WRITE_CSI("H")
+EndMacro
+
+; Row and column should be integers.
+
+Macro VT100_CURSOR_POSITION(row, col)
+  VT100_WRITE_CSI(Str(row) + ";" + Str(col) + "H")
+EndMacro
+
+; These are DECSC and DECRC Save/Restore Cursor (7/8).
+;
+; Save or Restore the Cursor's position along with the graphic rendition (SGR)
+; and character set (SGS).
+;
+; These are paired: a DECRC should have been preceded by a DECSC.
+
+Macro VT100_SAVE_CURSOR
+  VT100_WRITE_ESC("7")
+EndMacro
+
+Macro VT100_RESTORE_CURSOR
+  VT100_WRITE_ESC("8")
+EndMacro
+
+Macro VT100_ERASE_LINE
+  VT100_WRITE_CSI("K") ; EL Erase in line from cursor to eol
+EndMacro
+
+; This is RIS Reset to Initial State (c).
+;
+; The terminal is returned to its "just powered on" state.
+
+Macro VT100_HARD_RESET
+  VT100_WRITE_ESC("c")
+EndMacro
+
+
+
+
 ; ----- Forward declarations --------------------------------------------------
 ;
 ; Rather than try to manage just the ones I need, I'm going to declare all
@@ -174,17 +240,12 @@ Global.tTERMIOS raw_termios         ; not really used after set, kept for refere
 Declare.i VT100_GET_TERMIOS(*p.tTERMIOS)
 Declare.i VT100_RAW_MODE(*p.tTERMIOS)
 Declare.i VT100_RESTORE_MODE(*p.tTERMIOS)
-Declare.i VT100_CURSOR_HOME()
-Declare.i VT100_CURSOR_POSITION(*coord.tCOORD)
-Declare.i VT100_ERASE_ROW(row.i)
-Declare.i VT100_ERASE_SCREEN()
-Declare.i VT100_HARD_RESET()
 Declare.i VT100_REPORT_CURSOR_POSITION(*coord.tCOORD)
 Declare.i VT100_REPORT_SCREEN_DIMENSIONS(*coord.tCOORD)
 Declare.i VT100_WRITE_CSI(s.s)
 Declare.i VT100_WRITE_ESC(s.s)
 Declare.i VT100_WRITE_STRING(s.s)
-Declare.i VT100_STRING_TO_bUFFER(*buf, s.s)
+Declare.i VT100_STRING_TO_BUFFER(*buf, s.s)
 
 Declare   Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
 Declare.i display_message(sev.s, msg.s)
@@ -201,11 +262,11 @@ Declare.i Log_Message(sev.s, msg.s)
 
 Procedure.i Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
   If erase
-    VT100_ERASE_SCREEN()
-    VT100_CURSOR_HOME()
+    VT100_ERASE_SCREEN
+    VT100_CURSOR_HOME
     VT100_RESTORE_MODE(@original_termios)
   ElseIf reset
-    VT100_HARD_RESET()
+    VT100_HARD_RESET
   EndIf
   PrintN("")
   PrintN("kilo.pb fatal error!")
@@ -380,62 +441,8 @@ EndProcedure
 
 ; DCS and OSC are not implemented.
 
-; ----- Mnemonic helper functions for various commands ------------------------
 
-; This is an ED Erase in Display (J). It takes the following parameters:
-;
-; <NULL> Same as 0.
-;      0 Erase from the active position to end of display.
-;      1 Erase from start of the display to the active position.
-;      2 Erase the entire screen.
-;
-; The cursor position is not updated.
 
-Procedure.i VT100_ERASE_SCREEN()
-  ProcedureReturn VT100_WRITE_CSI("2J") ; ED Erase in display
-EndProcedure
-
-; This is a CUP CUrsor Position (H). It takes the following parameters:
-;
-;  <NULL> Move cursor to home
-;     1;1 Move cursor to home
-; ROW;COL Move cursor to that ROW and COLUMN.
-;
-; ROW and COLUMN appear to be consistently one based. This can be changed but
-; I'm comfortable assuming the default.
-;
-; Homing the cursor is a frequent enough operation to warrant its own helper.
-
-Procedure.i VT100_CURSOR_HOME()
-  ProcedureReturn VT100_WRITE_CSI("H") ; CUP Cursor position to home
-EndProcedure
-
-Procedure.i VT100_CURSOR_POSITION(*p.tCOORD)
-  ProcedureReturn VT100_WRITE_CSI(Str(*p\row) + ";" + Str(*p\col) + "H")
-EndProcedure
-
-; These are DECSC and DECRC Save/Restore Cursor (7/8).
-;
-; Save or Restore the Cursor's position along with the graphic rendition (SGR)
-; and character set (SGS).
-;
-; These are paired: a DECRC should have been preceded by a DECSC.
-
-Procedure.i VT100_CURSOR_SAVE()
-  ProcedureReturn VT100_WRITE_ESC("7")
-EndProcedure
-
-Procedure.i VT100_CURSOR_RESTORE()
-  ProcedureReturn VT100_WRITE_ESC("8")
-EndProcedure
-
-; This is RIS Reset to Initial State (c).
-;
-; The terminal is returned to its "just powered on" state.
-
-Procedure.i VT100_HARD_RESET()
-  ProcedureReturn VT100_WRITE_ESC("c")
-EndProcedure
 
 ; This is DSR Device Status Report active position (6n).
 ;
@@ -507,12 +514,13 @@ EndProcedure
 ; Report_Cursor_Position might report an error, but otherwise I don't check for
 ; one here.
 
+
 Procedure.i VT100_REPORT_SCREEN_DIMENSIONS(*p.tCOORD)
-  VT100_WRITE_ESC("7") ; DECSC save cursor
+  VT100_SAVE_CURSOR
   VT100_WRITE_CSI("999B") ; CUD cursor down this many
   VT100_WRITE_CSI("999C") ; CUF cursor forward this many
   VT100_REPORT_CURSOR_POSITION(*p)
-  VT100_WRITE_ESC("8") ; DECRC restore cursor
+  VT100_RESTORE_CURSOR
   ProcedureReturn #true
 EndProcedure
 
@@ -520,11 +528,11 @@ EndProcedure
 ; later, for now it's the last line of the display.
 
 Procedure.i display_message(sev.s, msg.s)
-  VT100_WRITE_ESC("7") ; DECSC
-  VT100_CURSOR_POSITION(@message_area)
-  VT100_WRITE_CSI("K") ; EL Erase in line from cursor to eol
+  VT100_SAVE_CURSOR
+  VT100_CURSOR_POSITION(message_area\row, message_area\col)
+  VT100_ERASE_LINE
   VT100_WRITE_STRING(sev + ":" + msg)
-  VT100_WRITE_ESC("8") ; DECRC
+  VT100_RESTORE_CURSOR
   ProcedureReturn #true
 EndProcedure
 
@@ -541,21 +549,18 @@ EndProcedure
 ; The top and bottom two rows are reserved.
 
 Procedure.i cursor_home()
-  Define.tCOORD p
-  p\row = 3
-  p\col = 1
-  VT100_CURSOR_POSITION(@p)
+  VT100_CURSOR_POSITION(3, 1)
 EndProcedure
 
 Procedure.i draw_rows()
-  VT100_WRITE_ESC("7") ; DECSC save cursor
+  VT100_SAVE_CURSOR
   cursor_home()
   Define.i row
   For row = 3 To screen_size\row - 3
     VT100_WRITE_STRING(~"~\r\n")
   Next row
   ; Write_string("~")
-  VT100_WRITE_ESC("8") ; DECRC restore cursor
+  VT100_RESTORE_CURSOR
 EndProcedure
 
 ; ----- Read a key press and return it one byte at a time ---------------------
@@ -594,7 +599,7 @@ Procedure.i process_key()
       VT100_REPORT_CURSOR_POSITION(@p)
       display_message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_Q
-      VT100_WRITE_CSI("10;1H") ; CUP cursor position 10 col 1
+      VT100_CURSOR_POSITION(10, 1)
       ProcedureReturn #true
     Case 'w', 'W'
       ; Define coord.tCOORD
@@ -654,7 +659,7 @@ message_area\col = 1
 message_area\row = message_area\row - 1
 
 ; Greet the user.
-VT100_ERASE_SCREEN()
+VT100_ERASE_SCREEN
 cursor_home()
 display_message("I", "Welcome to kilo in PureBasic!")
 
