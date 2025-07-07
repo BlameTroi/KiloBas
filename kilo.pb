@@ -75,6 +75,10 @@ EnableExplicit
 ;
 ; This gets a bit odd feeling when there are multiple error paths to deal
 ; with.
+;
+; * Functions that can fail return #true on success and #false on failure.
+;   Functions that really don't need to report success or failure are still
+;   declared as returning a value as well.
 
 ; ----- Include system library interfaces -------------------------------------
 ;
@@ -183,7 +187,7 @@ Declare.i VT100_WRITE_STRING(s.s)
 Declare.i VT100_STRING_TO_bUFFER(*buf, s.s)
 
 Declare   Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
-Declare.i EDITOR_DISPLAY_MESSAGE(sev.s, msg.s)
+Declare.i display_message(sev.s, msg.s)
 Declare.i Log_Message(sev.s, msg.s)
 
 ; ----- Common error exit -----------------------------------------------------
@@ -195,7 +199,7 @@ Declare.i Log_Message(sev.s, msg.s)
 ; procedure calls. This parameter ordering puts the values that might be
 ; overridden at the front of the list.
 
-Procedure Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
+Procedure.i Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
   If erase
     VT100_ERASE_SCREEN()
     VT100_CURSOR_HOME()
@@ -225,7 +229,7 @@ Procedure.i VT100_GET_TERMIOS(*p.tTERMIOS)
   ProcedureReturn #true
 EndProcedure
 
-Procedure VT100_RESTORE_MODE(*p.tTERMIOS)
+Procedure.i VT100_RESTORE_MODE(*p.tTERMIOS)
   If -1 = fTCSETATTR(0, #TCSAFLUSH, *p)
     Abort("Disable_Raw_Mode failed tcsetattr", Str(fERRNO()))
   Endif
@@ -234,12 +238,14 @@ EndProcedure
 
 Procedure.i VT100_SET_RAW_MODE(*raw.tTERMIOS)
   VT100_GET_TERMIOS(*raw)
-  *raw\c_iflag = *raw\c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
-  *raw\c_oflag = *raw\c_oflag & ~(#OPOST)
-  *raw\c_cflag = *raw\c_cflag | (#CS8)
-  *raw\c_lflag = *raw\c_lflag & ~(#ECHO | #ICANON | #IEXTEN | #ISIG)
-  *raw\c_cc[#VMIN] = 0       ; min number of bytes to return from read
-  *raw\c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
+  With *raw
+    \c_iflag = \c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
+    \c_oflag = \c_oflag & ~(#OPOST)
+    \c_cflag = \c_cflag | (#CS8)
+    \c_lflag = \c_lflag & ~(#ECHO | #ICANON | #IEXTEN | #ISIG)
+    \c_cc[#VMIN] = 0       ; min number of bytes to return from read
+    \c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
+  EndWith
   If -1 = fTCSETATTR(0, #TCSAFLUSH, *raw)
     Abort("Enable_Raw_Mode failed tcsetattr", Str(fERRNO()))
   EndIf
@@ -505,7 +511,6 @@ Procedure.i VT100_REPORT_SCREEN_DIMENSIONS(*p.tCOORD)
   VT100_WRITE_ESC("7") ; DECSC save cursor
   VT100_WRITE_CSI("999B") ; CUD cursor down this many
   VT100_WRITE_CSI("999C") ; CUF cursor forward this many
-  *p\row = -2 : *p\col = -2 ; default to indicate error
   VT100_REPORT_CURSOR_POSITION(*p)
   VT100_WRITE_ESC("8") ; DECRC restore cursor
   ProcedureReturn #true
@@ -514,7 +519,7 @@ EndProcedure
 ; Display the severity and text of a message. A "message area" will be defined
 ; later, for now it's the last line of the display.
 
-Procedure.i EDITOR_DISPLAY_MESSAGE(sev.s, msg.s)
+Procedure.i display_message(sev.s, msg.s)
   VT100_WRITE_ESC("7") ; DECSC
   VT100_CURSOR_POSITION(@message_area)
   VT100_WRITE_CSI("K") ; EL Erase in line from cursor to eol
@@ -535,15 +540,16 @@ EndProcedure
 ;
 ; The top and bottom two rows are reserved.
 
-Procedure EDITOR_CURSOR_HOME()
+Procedure.i cursor_home()
   Define.tCOORD p
-  p\row = 3 : p\col = 1
+  p\row = 3
+  p\col = 1
   VT100_CURSOR_POSITION(@p)
 EndProcedure
 
-Procedure editor_draw_rows()
+Procedure.i draw_rows()
   VT100_WRITE_ESC("7") ; DECSC save cursor
-  EDITOR_CURSOR_HOME()
+  cursor_home()
   Define.i row
   For row = 3 To screen_size\row - 3
     VT100_WRITE_STRING(~"~\r\n")
@@ -557,7 +563,7 @@ EndProcedure
 ; On macOS read doesn't mark no input as a hard error so check for nothing read
 ; and handle as if we got an error return flagged #EAGAIN
 
-Procedure.a EDITOR_READ_KEY()
+Procedure.a read_key()
   Define n.i
   Define c.a
   Repeat
@@ -576,17 +582,17 @@ EndProcedure
 
 ; ----- Handle key press ------------------------------------------------------
 
-Procedure.i EDITOR_PROCESS_KEY()
-  Define c.a = EDITOR_READ_KEY()
+Procedure.i process_key()
+  Define c.a = read_key()
   Select c
     Case #CTRL_D ; display screen size.
       Define.tCOORD p
       VT100_REPORT_SCREEN_DIMENSIONS(@p)
-      EDITOR_DISPLAY_MESSAGE("I", "Screen size: " + Str(p\row) + " x " + Str(p\col))
+      display_message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_P
       Define.tCOORD p
       VT100_REPORT_CURSOR_POSITION(@p)
-      EDITOR_DISPLAY_MESSAGE("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col))
+      display_message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_Q
       VT100_WRITE_CSI("10;1H") ; CUP cursor position 10 col 1
       ProcedureReturn #true
@@ -630,8 +636,8 @@ EndProcedure
 
 ; ----- Clear and repaint the screen ------------------------------------------
 
-Procedure EDITOR_REFRESH_SCREEN()
-  editor_draw_rows()
+Procedure.i refresh_screen()
+  draw_rows()
 EndProcedure
 
 ; ----- Mainline driver -------------------------------------------------------
@@ -639,20 +645,26 @@ EndProcedure
 ; This is your basic repeat until done loop. Properly restoring the terminal
 ; settings needs better plumbing.
 
-
+; Set up the terminal and identify screen areas.
 VT100_GET_TERMIOS(@original_termios)
 VT100_SET_RAW_MODE(@raw_termios)
 VT100_REPORT_SCREEN_DIMENSIONS(@screen_size)
 message_area = screen_size
 message_area\col = 1
 message_area\row = message_area\row - 1
-VT100_ERASE_SCREEN()
-EDITOR_CURSOR_HOME()
-EDITOR_DISPLAY_MESSAGE("I", "Welcome to kilo in PureBasic!")
-Repeat
-  EDITOR_REFRESH_SCREEN()
-Until EDITOR_PROCESS_KEY()
 
+; Greet the user.
+VT100_ERASE_SCREEN()
+cursor_home()
+display_message("I", "Welcome to kilo in PureBasic!")
+
+; The top level mainline is really small.
+Repeat
+  refresh_screen()
+Until process_key()
+
+; Restore the terminal to its original settings.
+; TODO: Can I save and restore the complete screen state?
 VT100_RESTORE_MODE(@original_termios)
 
 End
