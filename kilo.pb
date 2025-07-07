@@ -104,17 +104,17 @@ XIncludeFile "syslib/common.pbi" ; common macros, constants, and procedures
 XIncludeFile "syslib/vt100.pbi"  ; VT100/ANSI terminal control API
 
 ; ----- Forward declarations --------------------------------------------------
-
-Declare   abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
+;
+; None at present.
 
 ; ----- Common or global data -------------------------------------------------
 ;
 ; This could be collected into a `context` structure that is dynamically
 ; allocated, but at this stage of development global variables suffice.
 
-Global.tROWCOL   cursor_position     ; current position
-Global.tROWCOL   screen_size         ; dimensions of physical screen
-Global.tROWCOL   message_area        ; start of message output area
+Global.tROWCOL   cursor_position    ; current position
+Global.tROWCOL   screen_size        ; dimensions of physical screen
+Global.tROWCOL   message_area       ; start of message output area
 
 Global.tTERMIOS original_termios    ; saved to restore at exit
 Global.tTERMIOS raw_termios         ; not really used after set, kept for reference
@@ -208,6 +208,13 @@ Procedure.i process_key()
     Case #CTRL_Q
       VT100_CURSOR_POSITION(10, 1)
       ProcedureReturn #true
+    Case #CTRL_A
+      VT100_SAVE_CURSOR
+      VT100_CURSOR_POSITION(5, 8)
+      VT100_WRITE_STRING("Game Over Man!!!")
+      VT100_RESTORE_CURSOR
+      Delay(2500)
+      abort("You forced an abort", "", #false, #true, -1)
     Case 'w', 'W'
       ; Define coord.tROWCOL
       ; VT100_GET_CURSOR(@coord)
