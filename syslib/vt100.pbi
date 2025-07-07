@@ -1,15 +1,111 @@
 ; vt100.pbi - a bunch of VT100 escape sequences from the Dec VT100 manual.
 
+EnableExplicit
+
 ; work in progress
 
-EnableExplicit
+; ----- Overview --------------------------------------------------------------
+;
+; A wrapper for using VT100/ANSI terminal control sequences instead of
+; (N/PD)CURSES.
+;
+; I couldn't come up with a way to create command sequence strings for
+; the ESC prefix character so there's a little bit of extra work going
+; on here.
+;
+; All of the API procedures are prefixed VT100. Any internal only procedures
+; are prefixed _VT100.
+;
+; All command sequences mnemonic procedures or macros.
+
+; ----- Include system library and local interfaces ---------------------------
 
 XIncludeFile "unistd.pbi"
 XIncludeFile "common.pbi"
 
-; Preserve ERRNO for error handling.
+; ----- Forward declarations --------------------------------------------------
+;
+; Better would be to put the external use procedure declarations in a
+; DeclareModule block.
 
-Global VT100_ERRNO.i
+Declare.i VT100_GET_TERMIOS(*p.tTERMIOS)
+Declare.i VT100_RAW_MODE(*p.tTERMIOS)
+Declare.i VT100_RESTORE_MODE(*p.tTERMIOS)
+Declare.i VT100_REPORT_CURSOR_POSITION(*coord.tROWCOL)
+Declare.i VT100_REPORT_SCREEN_DIMENSIONS(*coord.tROWCOL)
+Declare.i VT100_WRITE_CSI(s.s)
+Declare.i VT100_WRITE_ESC(s.s)
+Declare.i VT100_WRITE_STRING(s.s)
+
+; ----- Globals ---------------------------------------------------------------
+;
+; I'm trying to keep this to a minimum and will probably convert this
+; to a PureBasic Module to control scoping.
+
+Global.i VT100_ERRNO
+
+; ----- Macros for some of the simple VT100 commands --------------------------
+;
+; This is an ED Erase in Display (J). It takes the following parameters:
+;
+; <NULL> Same as 0.
+;      0 Erase from the active position to end of display.
+;      1 Erase from start of the display to the active position.
+;      2 Erase the entire screen.
+;
+; The cursor position is not updated.
+
+Macro VT100_ERASE_SCREEN
+  VT100_WRITE_CSI("2J")
+EndMacro
+
+; This is a CUP CUrsor Position (H). It takes the following parameters:
+;
+;  <NULL> Move cursor to home
+;     1;1 Move cursor to home
+; ROW;COL Move cursor to that ROW and COLUMN.
+;
+; ROW and COLUMN appear to be consistently one based. This can be changed but
+; I'm comfortable assuming the default.
+;
+; Homing the cursor is a frequent enough operation to warrant its own helper.
+
+Macro VT100_CURSOR_HOME
+  VT100_WRITE_CSI("H")
+EndMacro
+
+; Row and column should be integers.
+
+Macro VT100_CURSOR_POSITION(row, col)
+  VT100_WRITE_CSI(Str(row) + ";" + Str(col) + "H")
+EndMacro
+
+; These are DECSC and DECRC Save/Restore Cursor (7/8).
+;
+; Save or Restore the Cursor's position along with the graphic rendition (SGR)
+; and character set (SGS).
+;
+; These are paired: a DECRC should have been preceded by a DECSC.
+
+Macro VT100_SAVE_CURSOR
+  VT100_WRITE_ESC("7")
+EndMacro
+
+Macro VT100_RESTORE_CURSOR
+  VT100_WRITE_ESC("8")
+EndMacro
+
+Macro VT100_ERASE_LINE
+  VT100_WRITE_CSI("K") ; EL Erase in line from cursor to eol
+EndMacro
+
+; This is RIS Reset to Initial State (c).
+;
+; The terminal is returned to its "just powered on" state.
+
+Macro VT100_HARD_RESET
+  VT100_WRITE_ESC("c")
+EndMacro
 
 ; ----- VT100 Command Sequences -----------------------------------------------
 ;
@@ -85,6 +181,41 @@ Global VT100_ERRNO.i
 ;     TBC – Tabulation Clear 
 ; ------ Any initialization for this support library --------------------------
 
-_VT100_INITIALIZE()
+
+; ----- Disable raw mode/restore prior saved terminal configuration -----------
+;
+; If the client wants to restore the terminal to its configuration before
+; it was placed in raw mode, VT100_GET_TERMIOS can be used to retrieve
+; the current TERMIOS structure prior to VT100_SET_RAW_MODE.
+
+Procedure.i VT100_GET_TERMIOS(*p.tTERMIOS)
+  If -1 = fTCGETATTR(0, *p)
+    abexit("Enable_Raw_Mode failed tcgetattr", Str(fERRNO()))
+  EndIf
+  ProcedureReturn #true
+EndProcedure
+
+Procedure.i VT100_RESTORE_MODE(*p.tTERMIOS)
+  If -1 = fTCSETATTR(0, #TCSAFLUSH, *p)
+    abexit("Disable_Raw_Mode failed tcsetattr", Str(fERRNO()))
+  Endif
+  ProcedureReturn #true
+EndProcedure
+
+Procedure.i VT100_SET_RAW_MODE(*raw.tTERMIOS)
+  VT100_GET_TERMIOS(*raw)
+  With *raw
+    \c_iflag = \c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
+    \c_oflag = \c_oflag & ~(#OPOST)
+    \c_cflag = \c_cflag | (#CS8)
+    \c_lflag = \c_lflag & ~(#ECHO | #ICANON | #IEXTEN | #ISIG)
+    \c_cc[#VMIN] = 0       ; min number of bytes to return from read
+    \c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
+  EndWith
+  If -1 = fTCSETATTR(0, #TCSAFLUSH, *raw)
+    abexit("Enable_Raw_Mode failed tcsetattr", Str(fERRNO()))
+  EndIf
+  ProcedureReturn #true
+EndProcedure
 
 ; vt100.pbi ends here ---------------------------------------------------------

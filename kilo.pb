@@ -86,113 +86,32 @@ EnableExplicit
 ; libraries are in a sub directory of this project. When these reference each
 ; other they do not specify a directory. This works as I want it to so I'm not
 ; planning to use `IncludePath`.
-;
-; I expect to break this as I start making a set of my own libraries independent
-; from the system libraries. I want to have a txblib separate from syslib. When
-; I start on that I'll have some untangling to do.
 
 ; System include libraries (libc):
+;
+; These are the parts of the C system includes <.h> that I use.
 
 ; XIncludeFile "syslib/ctype.pbi" ; not yet implemented
 XIncludeFile "syslib/errno.pbi"
 XIncludeFile "syslib/termios.pbi"
 ; XIncludeFile "syslib/stdio.h" ; not yet implemented
 ; XIncludeFile "syslib/stdlib.h" ; not yet implemented
-XIncludeFile "syslib/unistd.pbi"
+XIncludeFile "syslib/unistd.pbi" ; The parts of 
 
 ; My utility libraries:
 
 XIncludeFile "syslib/common.pbi" ; common macros, constants, and procedures
-; XIncludeFile "syslib/vt100.pbi" ; removing for a bit
-
-
-; ----- Macros for some of the simple VT100 commands --------------------------
-;
-; This is an ED Erase in Display (J). It takes the following parameters:
-;
-; <NULL> Same as 0.
-;      0 Erase from the active position to end of display.
-;      1 Erase from start of the display to the active position.
-;      2 Erase the entire screen.
-;
-; The cursor position is not updated.
-
-Macro VT100_ERASE_SCREEN
-  VT100_WRITE_CSI("2J")
-EndMacro
-
-; This is a CUP CUrsor Position (H). It takes the following parameters:
-;
-;  <NULL> Move cursor to home
-;     1;1 Move cursor to home
-; ROW;COL Move cursor to that ROW and COLUMN.
-;
-; ROW and COLUMN appear to be consistently one based. This can be changed but
-; I'm comfortable assuming the default.
-;
-; Homing the cursor is a frequent enough operation to warrant its own helper.
-
-Macro VT100_CURSOR_HOME
-  VT100_WRITE_CSI("H")
-EndMacro
-
-; Row and column should be integers.
-
-Macro VT100_CURSOR_POSITION(row, col)
-  VT100_WRITE_CSI(Str(row) + ";" + Str(col) + "H")
-EndMacro
-
-; These are DECSC and DECRC Save/Restore Cursor (7/8).
-;
-; Save or Restore the Cursor's position along with the graphic rendition (SGR)
-; and character set (SGS).
-;
-; These are paired: a DECRC should have been preceded by a DECSC.
-
-Macro VT100_SAVE_CURSOR
-  VT100_WRITE_ESC("7")
-EndMacro
-
-Macro VT100_RESTORE_CURSOR
-  VT100_WRITE_ESC("8")
-EndMacro
-
-Macro VT100_ERASE_LINE
-  VT100_WRITE_CSI("K") ; EL Erase in line from cursor to eol
-EndMacro
-
-; This is RIS Reset to Initial State (c).
-;
-; The terminal is returned to its "just powered on" state.
-
-Macro VT100_HARD_RESET
-  VT100_WRITE_ESC("c")
-EndMacro
-
-
-
+XIncludeFile "syslib/vt100.pbi"  ; VT100/ANSI terminal control API
 
 ; ----- Forward declarations --------------------------------------------------
-;
-; Rather than try to manage just the ones I need, I'm going to declare all
-; functions here.
-
-Declare.i VT100_GET_TERMIOS(*p.tTERMIOS)
-Declare.i VT100_RAW_MODE(*p.tTERMIOS)
-Declare.i VT100_RESTORE_MODE(*p.tTERMIOS)
-Declare.i VT100_REPORT_CURSOR_POSITION(*coord.tROWCOL)
-Declare.i VT100_REPORT_SCREEN_DIMENSIONS(*coord.tROWCOL)
-Declare.i VT100_WRITE_CSI(s.s)
-Declare.i VT100_WRITE_ESC(s.s)
-Declare.i VT100_WRITE_STRING(s.s)
-
-; ----- Common or global data -------------------------------------------------
-;
-; This needs to land in a `context` structure that is dynamically allocated,
-; but at this stage of development global variables suffice.
 
 Declare   abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
 Declare.i display_message(sev.s, msg.s)
+
+; ----- Common or global data -------------------------------------------------
+;
+; This could be collected into a `context` structure that is dynamically
+; allocated, but at this stage of development global variables suffice.
 
 Global.tROWCOL   cursor_position     ; current position
 Global.tROWCOL   screen_size         ; dimensions of physical screen
@@ -225,42 +144,6 @@ Procedure.i Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
     PrintN(" Extra  : " + extra)
   EndIf
   End rc
-EndProcedure
-
-; ----- Disable raw mode/restore prior saved terminal configuration -----------
-;
-; The code in the C `main` uses `atexit` to ensure that disable_raw_mode is
-; called. I believe I can do this in PureBasic by decorating the Procedure
-; declaration with either `C` or `Dll` to force the correct ABI.
-
-Procedure.i VT100_GET_TERMIOS(*p.tTERMIOS)
-  If -1 = fTCGETATTR(0, *p)
-    Abort("Enable_Raw_Mode failed tcgetattr", Str(fERRNO()))
-  EndIf
-  ProcedureReturn #true
-EndProcedure
-
-Procedure.i VT100_RESTORE_MODE(*p.tTERMIOS)
-  If -1 = fTCSETATTR(0, #TCSAFLUSH, *p)
-    Abort("Disable_Raw_Mode failed tcsetattr", Str(fERRNO()))
-  Endif
-  ProcedureReturn #true
-EndProcedure
-
-Procedure.i VT100_SET_RAW_MODE(*raw.tTERMIOS)
-  VT100_GET_TERMIOS(*raw)
-  With *raw
-    \c_iflag = \c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
-    \c_oflag = \c_oflag & ~(#OPOST)
-    \c_cflag = \c_cflag | (#CS8)
-    \c_lflag = \c_lflag & ~(#ECHO | #ICANON | #IEXTEN | #ISIG)
-    \c_cc[#VMIN] = 0       ; min number of bytes to return from read
-    \c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
-  EndWith
-  If -1 = fTCSETATTR(0, #TCSAFLUSH, *raw)
-    Abort("Enable_Raw_Mode failed tcsetattr", Str(fERRNO()))
-  EndIf
-  ProcedureReturn #true
 EndProcedure
 
 ; Cursor up 	ESC [ Pn A
