@@ -137,18 +137,14 @@ Procedure abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
     VT100_HARD_RESET
   EndIf
   abexit(s, extra, rc)
-  ; PrintN("") 
-  ; PrintN("kilo.pb fatal error!") 
-  ; PrintN(" Message: " + s) 
-  ; If extra <> "" 
-  ;   PrintN(" Extra  : " + extra) 
-  ; EndIf 
-  ; End rc 
 EndProcedure
 
-; ----- Display rows on the screen --------------------------------------------
+; ----- Controlling the presentation ------------------------------------------
 ;
-; The top and bottom two rows are reserved.
+; The screen display is superficially vi like. The top and bottom two rows
+; are reserved. As in vi, empty lines are flagged with a tilde (~).
+;
+; I might try to switch to a format more like that of XEdit in CMS.
 
 Procedure.i cursor_home()
   VT100_CURSOR_POSITION(3, 1)
@@ -161,24 +157,23 @@ Procedure.i draw_rows()
   For row = 3 To screen_size\row - 3
     VT100_WRITE_STRING(~"~\r\n")
   Next row
-  ; Write_string("~")
   VT100_RESTORE_CURSOR
+EndProcedure
+
+Procedure.i refresh_screen()
+  draw_rows()
 EndProcedure
 
 ; ----- Read a key press and return it one byte at a time ---------------------
 ;
 ; On macOS read doesn't mark no input as a hard error so check for nothing read
-; and handle as if we got an error return flagged #EAGAIN
-
-Macro VT100_READ_KEY(c)
-  fREAD(0, @c, 1)
-EndMacro
+; and handle as if we got an error return flagged #EAGAIN. Proper handling
+; of things such as PF keys is still to do.
 
 Procedure.a read_key()
   Define n.i
   Define c.a
   Repeat
-;    n = fREAD(0, @c, 1)
     n = VT100_READ_KEY(c)
     If n = -1
       Define e.i = fERRNO()
@@ -193,6 +188,11 @@ Procedure.a read_key()
 EndProcedure
 
 ; ----- Handle key press ------------------------------------------------------
+;
+; Route control based on mode and key. Try to keep any one Case clause
+; short--use Procedures when appropriate.
+;
+; This procedure returns #true when the user requests that the session end.
 
 Procedure.i process_key()
   Define c.a = read_key()
@@ -201,14 +201,14 @@ Procedure.i process_key()
       Define.tROWCOL p
       VT100_REPORT_SCREEN_DIMENSIONS(@p)
       VT100_DISPLAY_MESSAGE("I", "Screen size: " + Str(p\row) + " x " + Str(p\col), @message_area)
-    Case #CTRL_P
+    Case #CTRL_P ; display current cursor position
       Define.tROWCOL p
       VT100_REPORT_CURSOR_POSITION(@p)
       VT100_DISPLAY_MESSAGE("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col), @message_area)
-    Case #CTRL_Q
+    Case #CTRL_Q ; quit program
       VT100_CURSOR_POSITION(10, 1)
       ProcedureReturn #true
-    Case #CTRL_A
+    Case #CTRL_A ; force an run through the abort path
       VT100_SAVE_CURSOR
       VT100_CURSOR_POSITION(5, 8)
       VT100_WRITE_STRING("Game Over Man!!!")
@@ -253,38 +253,32 @@ Procedure.i process_key()
   ProcedureReturn #false
 EndProcedure
 
-; ----- Clear and repaint the screen ------------------------------------------
+; ----- Kilo top level --------------------------------------------------------
+;
+; Set up the screen and do whatever is requested.
 
-Procedure.i refresh_screen()
-  draw_rows()
+Procedure Mainline()
+  ; Set up the terminal and identify screen areas.
+  VT100_GET_TERMIOS(@original_termios)
+  VT100_SET_RAW_MODE(@raw_termios)
+  VT100_REPORT_SCREEN_DIMENSIONS(@screen_size)
+  message_area = screen_size
+  message_area\col = 1
+  message_area\row = message_area\row - 1
+  ; Greet the user.
+  VT100_ERASE_SCREEN
+  cursor_home()
+  VT100_DISPLAY_MESSAGE("I", "Welcome to kilo in PureBasic!", @message_area)
+  ; The top level mainline is really small.
+  Repeat
+    refresh_screen()
+  Until process_key()
+  ; Restore the terminal to its original settings.
+  ; TODO: Can I save and restore the complete screen state?
+  VT100_RESTORE_MODE(@original_termios)
 EndProcedure
 
-; ----- Mainline driver -------------------------------------------------------
-;
-; This is your basic repeat until done loop. Properly restoring the terminal
-; settings needs better plumbing.
-
-; Set up the terminal and identify screen areas.
-VT100_GET_TERMIOS(@original_termios)
-VT100_SET_RAW_MODE(@raw_termios)
-VT100_REPORT_SCREEN_DIMENSIONS(@screen_size)
-message_area = screen_size
-message_area\col = 1
-message_area\row = message_area\row - 1
-
-; Greet the user.
-VT100_ERASE_SCREEN
-cursor_home()
-VT100_DISPLAY_MESSAGE("I", "Welcome to kilo in PureBasic!", @message_area)
-
-; The top level mainline is really small.
-Repeat
-  refresh_screen()
-Until process_key()
-
-; Restore the terminal to its original settings.
-; TODO: Can I save and restore the complete screen state?
-VT100_RESTORE_MODE(@original_termios)
+Mainline()
 
 End
 
