@@ -102,69 +102,9 @@ XIncludeFile "syslib/unistd.pbi"
 
 ; My utility libraries:
 
+XIncludeFile "syslib/common.pbi" ; common macros, constants, and procedures
 ; XIncludeFile "syslib/vt100.pbi" ; removing for a bit
 
-
-; ----- Key press and response mapping ----------------------------------------
-;
-; I couldn't come up with a better way to generate the control character
-; constants so enumeration it is. I'm adding the VT100/ANSI interpretation of
-; these as keys for reference.
-;
-; TODO: Move to a separate include file.
-
-Enumeration ANSI_CHARACTERS 1
-  #CTRL_A
-  #CTRL_B
-  #CTRL_C
-  #CTRL_D
-  #CTRL_E
-  #CTRL_F
-  #CTRL_G               ; BEL Terminal bell       \b
-  #CTRL_H               ; BS  Backspace           \b
-  #CTRL_I               ; HT  Horizontal tab      \t
-  #CTRL_J               ; LF  Linefeed (newline)  \n
-  #CTRL_K               ; VT  Vertical tab        \v
-  #CTRL_L               ; FF  Formfeed            \f
-  #CTRL_M               ; CR  Carriage return     \r
-  #CTRL_N
-  #CTRL_O
-  #CTRL_P
-  #CTRL_Q
-  #CTRL_R
-  #CTRL_S
-  #CTRL_T
-  #CTRL_U
-  #CTRL_V
-  #CTRL_W
-  #CTRL_X
-  #CTRL_Y
-  #CTRL_Z
-  #ESCAPE               ; ESC Escape (PB #ESC)   \e
-  #DELETE = 127         ; DEL Delete character
-EndEnumeration
-
-; ----- The usual x,y coordinates ---------------------------------------------
-;
-; But these are y,x instead of x,y. To avoid the muscle memory confusion always
-; use row and column naming.
-
-Structure tCOORD
-  row.i
-  col.i
-EndStructure
-
-; ----- Common or global data -------------------------------------------------
-;
-; This needs to land in a `context` structure that is dynamically allocated,
-; but at this stage of development global variables suffice.
-
-Global.tCOORD   cursor_position     ; current position
-Global.tCOORD   screen_size         ; dimensions of physical screen
-Global.tCOORD   message_area        ; start of message output area
-
-Global.tTERMIOS original_termios    ; saved to restore at exit
-Global.tTERMIOS raw_termios         ; not really used after set, kept for reference
 
 ; ----- Macros for some of the simple VT100 commands --------------------------
 ;
@@ -240,16 +180,26 @@ EndMacro
 Declare.i VT100_GET_TERMIOS(*p.tTERMIOS)
 Declare.i VT100_RAW_MODE(*p.tTERMIOS)
 Declare.i VT100_RESTORE_MODE(*p.tTERMIOS)
-Declare.i VT100_REPORT_CURSOR_POSITION(*coord.tCOORD)
-Declare.i VT100_REPORT_SCREEN_DIMENSIONS(*coord.tCOORD)
+Declare.i VT100_REPORT_CURSOR_POSITION(*coord.tROWCOL)
+Declare.i VT100_REPORT_SCREEN_DIMENSIONS(*coord.tROWCOL)
 Declare.i VT100_WRITE_CSI(s.s)
 Declare.i VT100_WRITE_ESC(s.s)
 Declare.i VT100_WRITE_STRING(s.s)
-Declare.i VT100_STRING_TO_BUFFER(*buf, s.s)
 
-Declare   Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
+; ----- Common or global data -------------------------------------------------
+;
+; This needs to land in a `context` structure that is dynamically allocated,
+; but at this stage of development global variables suffice.
+
+Declare   abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
 Declare.i display_message(sev.s, msg.s)
-Declare.i Log_Message(sev.s, msg.s)
+
+Global.tROWCOL   cursor_position     ; current position
+Global.tROWCOL   screen_size         ; dimensions of physical screen
+Global.tROWCOL   message_area        ; start of message output area
+
+Global.tTERMIOS original_termios    ; saved to restore at exit
+Global.tTERMIOS raw_termios         ; not really used after set, kept for reference
 
 ; ----- Common error exit -----------------------------------------------------
 ;
@@ -337,7 +287,7 @@ Procedure.i VT100_WRITE_STRING(s.s)
   Define *buf = AllocateMemory(Len(s) + 8)
   If *buf
     FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII)
-    VT100_STRING_TO_BUFFER(*buf, s)
+    string_to_buffer(s, *buf)
     Define.i sent = fWRITE(1, *buf, Len(s))
     Define.i err = fERRNO()
     FreeMemory(*buf)
@@ -351,24 +301,6 @@ Procedure.i VT100_WRITE_STRING(s.s)
     Abort("Write_String AllocateMemory failed", Str(fERRNO()))
     ProcedureReturn #false ; never executed
   EndIf
-EndProcedure
-
-; ----- Copy a native string into a C string ----------------------------------
-;
-; This is a very trusting routine. It makes no overflow checks. As the caller
-; provides the buffer, the length verification is its responsibility.
-;
-; Always returns #true.
-
-Procedure.i VT100_STRING_TO_BUFFER(*buf, s.s)
-  Define *ptr = *buf
-  Define.i i
-  For i = 1 To Len(s)
-    PokeA(*ptr, Asc(Mid(s, i, 1)))
-    *ptr = *ptr + 1
-  Next i
-  PokeA(*ptr, 0) ; this is not strictly needed
-  ProcedureReturn #true
 EndProcedure
 
 ; ----- Issue terminal commands with any required prefix ---------------------
@@ -401,7 +333,7 @@ Procedure.i VT100_WRITE_CSI(s.s)
     FillMemory(*buf, Len(s) + 8, #PB_ASCII)
     PokeA(*buf, $1b)
     PokeA(*buf + 1, '[')
-    VT100_STRING_TO_BUFFER(*buf + 2, s)
+    string_to_buffer(s, *buf + 2)
     Define.i sent = fWRITE(1, *buf, Len(s) + 2)
     FreeMemory(*buf)
     If sent = Len(s) + 2
@@ -424,7 +356,7 @@ Procedure.i VT100_WRITE_ESC(s.s)
   If *buf
     FillMemory(*buf, Len(s) + 8, #PB_ASCII)
     PokeA(*buf, $1b)
-    VT100_STRING_TO_BUFFER(*buf + 1, s)
+    string_to_buffer(s, *buf + 1)
     Define.i sent = fWRITE(1, *buf, Len(s) + 1)
     If sent = Len(s) + 1
       ProcedureReturn #true
@@ -455,15 +387,7 @@ EndProcedure
 ;
 ; The response values are returned via in/out parameters.
 
-Procedure.i Is_Digit(c.s)
-  If Len(c) = 1 And c >= "0" And c <= "9"
-    ProcedureReturn #true
-  Else
-    ProcedureReturn #false
-  EndIf
-EndProcedure
-
-Procedure.i VT100_REPORT_CURSOR_POSITION(*p.TCOORD)
+Procedure.i VT100_REPORT_CURSOR_POSITION(*p.tROWCOL)
   ; -1,-1 indicates a failure in the DSR
   *p\row = -1
   *p\col = -1
@@ -485,14 +409,14 @@ Procedure.i VT100_REPORT_CURSOR_POSITION(*p.TCOORD)
       ; Collect row (digits up to the ;).
       *p\row = 0
       i = 3
-      While Is_Digit(Mid(s, i, 1))
+      While c_is_num(Mid(s, i, 1))
         *p\row = *p\row * 10 + Val(Mid(s, i, 1))
         i = i + 1
       Wend
       ; Skip past the assumed ; and collect the column (digits up to the R).
       *p\col = 0
       i = i + 1
-      While Is_Digit(Mid(s, i, 1))
+      While c_is_num(Mid(s, i, 1))
         *p\col = *p\col * 10 + Val(Mid(s, i, 1))
         i = i + 1
       Wend
@@ -515,7 +439,7 @@ EndProcedure
 ; one here.
 
 
-Procedure.i VT100_REPORT_SCREEN_DIMENSIONS(*p.tCOORD)
+Procedure.i VT100_REPORT_SCREEN_DIMENSIONS(*p.tROWCOL)
   VT100_SAVE_CURSOR
   VT100_WRITE_CSI("999B") ; CUD cursor down this many
   VT100_WRITE_CSI("999C") ; CUF cursor forward this many
@@ -591,18 +515,18 @@ Procedure.i process_key()
   Define c.a = read_key()
   Select c
     Case #CTRL_D ; display screen size.
-      Define.tCOORD p
+      Define.tROWCOL p
       VT100_REPORT_SCREEN_DIMENSIONS(@p)
       display_message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_P
-      Define.tCOORD p
+      Define.tROWCOL p
       VT100_REPORT_CURSOR_POSITION(@p)
       display_message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col))
     Case #CTRL_Q
       VT100_CURSOR_POSITION(10, 1)
       ProcedureReturn #true
     Case 'w', 'W'
-      ; Define coord.tCOORD
+      ; Define coord.tROWCOL
       ; VT100_GET_CURSOR(@coord)
       ; coord\row = coord\row - 1
       ; If coord\row < 1
@@ -610,7 +534,7 @@ Procedure.i process_key()
       ; EndIf
       ; VT100_SET_CURSOR(@coord)
     Case 'a', 'A'
-      ; Define coord.tCOORD
+      ; Define coord.tROWCOL
       ; VT100_GET_CURSOR(@coord)
       ; coord\col = coord\col - 1
       ; If coord\col < 1
@@ -618,7 +542,7 @@ Procedure.i process_key()
       ; EndIf
       ; VT100_SET_CURSOR(@coord)
     Case 's', 'S'
-      ; Define coord.tCOORD
+      ; Define coord.tROWCOL
       ; VT100_GET_CURSOR(@coord)
       ; coord\row = coord\row + 1
       ; If coord\row > 23
@@ -626,7 +550,7 @@ Procedure.i process_key()
       ; EndIf
       ; VT100_SET_CURSOR(@coord)
     Case 'd', 'D'
-      ; Define coord.tCOORD
+      ; Define coord.tROWCOL
       ; VT100_GET_CURSOR(@coord)
       ; coord\row = coord\col - 1
       ; If coord\col < 1
