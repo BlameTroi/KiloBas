@@ -180,7 +180,201 @@ EndMacro
 ;     SM – Set Mode 
 ;     TBC – Tabulation Clear 
 ; ------ Any initialization for this support library --------------------------
+;
+; Cursor up 	ESC [ Pn A
+; Cursor down 	ESC [ Pn B
+; Cursor forward (right) 	ESC [ Pn C
+; Cursor backward (left) 	ESC [ Pn D
+; Send data to the terminal.
+;
+; Raw text can be sent after marshaling out of the string and into an ASCII
+; byte buffer.
+;
+; Commands are text with some prefix as defined in the VT100 terminal
+; specification.
+; ----- Issue terminal commands with any required prefix ---------------------
+;
+; Terminal commands have a very consistent format.
+;
+; PREFIX PARAMETERS COMMAND
+;
+; PREFIX is one of the four options listed below.
+;
+; PARAMETERS are optional ASCII numeric strings separated by semicolons.
+;
+; COMMAND is usually a single alphabetic character (case sensitive).
+;
+; There are four prefixes. I don't know why there are so many options, but
+; it is what is is.
+;
+; ESC - sequence starting with ESC (\x1B)
+; CSI - Control Sequence Introducer: sequence starting with ESC [ or CSI (\x9B)
+; DCS - Device Control String: sequence starting with ESC P or DCS (\x90)
+; OSC - Operating System Command: sequence starting with ESC ] or OSC (\x9D)
+;
+; Where there are multiple prefix options I will use the ESC [ P ] variants.
 
+; CSI prefixed command:
+
+Procedure.i VT100_WRITE_CSI(s.s)
+  Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
+  If *buf
+    FillMemory(*buf, Len(s) + 8, #PB_ASCII)
+    PokeA(*buf, $1b)
+    PokeA(*buf + 1, '[')
+    string_to_buffer(s, *buf + 2)
+    Define.i sent = fWRITE(1, *buf, Len(s) + 2)
+    FreeMemory(*buf)
+    If sent = Len(s) + 2
+      ProcedureReturn #true
+    Else
+      ; error on send
+      ProcedureReturn #false
+    EndIf
+  Else
+    ; A fatal error.
+    abexit("Write_CSI_Command AllocateMemory failed", Str(fERRNO()))
+    ProcedureReturn #false ; never executed
+  EndIf
+EndProcedure
+
+; ESC prefixed command:
+
+Procedure.i VT100_WRITE_ESC(s.s)
+  Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
+  If *buf
+    FillMemory(*buf, Len(s) + 8, #PB_ASCII)
+    PokeA(*buf, $1b)
+    string_to_buffer(s, *buf + 1)
+    Define.i sent = fWRITE(1, *buf, Len(s) + 1)
+    If sent = Len(s) + 1
+      ProcedureReturn #true
+    Else
+      ; error on send
+      ProcedureReturn #false
+    EndIf
+  Else
+    ; A fatal error.
+    abexit("Write_ESC_Command AllocateMemory failed", Str(fERRNO()))
+    ProcedureReturn #false ; never executed
+  EndIf
+EndProcedure
+
+; DCS and OSC are not implemented.
+
+
+; ----- Write a string to the terminal ----------------------------------------
+;
+; To avoid any Unicode/UTF-8 issues I'm build a string of ASCII bytes.
+;
+; Returns #true if the message was sent correctly, #false if the send failed
+; (bytes sent = length to send), and aborts if buffer memory could not be
+; allocated.
+
+Procedure.i VT100_WRITE_STRING(s.s)
+  Define *buf = AllocateMemory(Len(s) + 8)
+  If *buf
+    FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII)
+    string_to_buffer(s, *buf)
+    Define.i sent = fWRITE(1, *buf, Len(s))
+    Define.i err = fERRNO()
+    FreeMemory(*buf)
+    If sent = Len(s)
+      ProcedureReturn #true
+    EndIf
+    ; What error checking could be done here?
+    ProcedureReturn #false
+  Else
+    ; A fatal error.
+    abexit("Write_String AllocateMemory failed", Str(fERRNO()))
+    ProcedureReturn #false ; never executed
+  EndIf
+EndProcedure
+
+
+; This is DSR Device Status Report active position (6n).
+;
+; There are multiple possible DSR requests. I believe the only one I need is
+; the current cursor position. The response is a CPR Cursor Position Report.
+; Its format is ESC [ row;col R.
+;
+; This may be the only place I need to parse a response so the parse code
+; has not been factored out.
+;
+; The response values are returned via in/out parameters.
+
+Procedure.i VT100_REPORT_CURSOR_POSITION(*p.tROWCOL)
+  ; -1,-1 indicates a failure in the DSR
+  *p\row = -1
+  *p\col = -1
+  If VT100_WRITE_CSI("6n") ; DSR for CPR cursor position report 6n -> r;cR
+    Define.a char
+    Define.i i
+    Define.s s
+    ; Read a character at a time until we do not get a character (a time out
+    ; on the wait) or the character received is the end marker for the CPR.
+    While fREAD(0, @char, 1)
+      s = s + Chr(char)
+      If char = 'R'
+        Break
+      EndIf
+    Wend
+    ; Does this appear to be a valid CPR? \e[#;#R? There is no error checking
+    ; beyond this.
+    If Len(s) >= 6 And Left(s, 1) = Chr($1b) And Right(s, 1) = "R"
+      ; Collect row (digits up to the ;).
+      *p\row = 0
+      i = 3
+      While c_is_num(Mid(s, i, 1))
+        *p\row = *p\row * 10 + Val(Mid(s, i, 1))
+        i = i + 1
+      Wend
+      ; Skip past the assumed ; and collect the column (digits up to the R).
+      *p\col = 0
+      i = i + 1
+      While c_is_num(Mid(s, i, 1))
+        *p\col = *p\col * 10 + Val(Mid(s, i, 1))
+        i = i + 1
+      Wend
+      ProcedureReturn #true
+    Else
+      ; Invalid CPR format.
+      ProcedureReturn #false
+    EndIf
+  Else
+    ; Error in DSR.
+    ProcedureReturn #false
+  EndIf
+EndProcedure
+
+; Report screen size using CUD/CUF and then a CPR. The cursor position is saved
+; and restored across this operation. The behavior for CUP 999;999H is not
+; defined, so I use CUD/CUF instead
+;
+; Report_Cursor_Position might report an error, but otherwise I don't check for
+; one here.
+
+Procedure.i VT100_REPORT_SCREEN_DIMENSIONS(*p.tROWCOL)
+  VT100_SAVE_CURSOR
+  VT100_WRITE_CSI("999B") ; CUD cursor down this many
+  VT100_WRITE_CSI("999C") ; CUF cursor forward this many
+  VT100_REPORT_CURSOR_POSITION(*p)
+  VT100_RESTORE_CURSOR
+  ProcedureReturn #true
+EndProcedure
+
+; Display the severity and text of a message. A "message area" will be defined
+; later, for now it's the last line of the display.
+
+Procedure.i VT100_DISPLAY_MESSAGE(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
+  VT100_SAVE_CURSOR
+  VT100_CURSOR_POSITION(*pos\row, *pos\col)
+  VT100_ERASE_LINE
+  VT100_WRITE_STRING(sev + ":" + msg)
+  VT100_RESTORE_CURSOR
+  ; todo: handle log
+  ProcedureReturn #true
+EndProcedure
 
 ; ----- Disable raw mode/restore prior saved terminal configuration -----------
 ;

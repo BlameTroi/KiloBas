@@ -106,7 +106,6 @@ XIncludeFile "syslib/vt100.pbi"  ; VT100/ANSI terminal control API
 ; ----- Forward declarations --------------------------------------------------
 
 Declare   abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
-Declare.i display_message(sev.s, msg.s)
 
 ; ----- Common or global data -------------------------------------------------
 ;
@@ -129,7 +128,7 @@ Global.tTERMIOS raw_termios         ; not really used after set, kept for refere
 ; procedure calls. This parameter ordering puts the values that might be
 ; overridden at the front of the list.
 
-Procedure.i Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
+Procedure abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
   If erase
     VT100_ERASE_SCREEN
     VT100_CURSOR_HOME
@@ -137,219 +136,15 @@ Procedure.i Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
   ElseIf reset
     VT100_HARD_RESET
   EndIf
-  PrintN("")
-  PrintN("kilo.pb fatal error!")
-  PrintN(" Message: " + s)
-  If extra <> ""
-    PrintN(" Extra  : " + extra)
-  EndIf
-  End rc
+  abexit(s, extra, rc)
+  ; PrintN("") 
+  ; PrintN("kilo.pb fatal error!") 
+  ; PrintN(" Message: " + s) 
+  ; If extra <> "" 
+  ;   PrintN(" Extra  : " + extra) 
+  ; EndIf 
+  ; End rc 
 EndProcedure
-
-; Cursor up 	ESC [ Pn A
-; Cursor down 	ESC [ Pn B
-; Cursor forward (right) 	ESC [ Pn C
-; Cursor backward (left) 	ESC [ Pn D
-; Send data to the terminal.
-;
-; Raw text can be sent after marshaling out of the string and into an ASCII
-; byte buffer.
-;
-; Commands are text with some prefix as defined in the VT100 terminal
-; specification.
-
-; ----- Write a string to the terminal ----------------------------------------
-;
-; To avoid any Unicode/UTF-8 issues I'm build a string of ASCII bytes.
-;
-; Returns #true if the message was sent correctly, #false if the send failed
-; (bytes sent = length to send), and aborts if buffer memory could not be
-; allocated.
-
-Procedure.i VT100_WRITE_STRING(s.s)
-  Define *buf = AllocateMemory(Len(s) + 8)
-  If *buf
-    FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII)
-    string_to_buffer(s, *buf)
-    Define.i sent = fWRITE(1, *buf, Len(s))
-    Define.i err = fERRNO()
-    FreeMemory(*buf)
-    If sent = Len(s)
-      ProcedureReturn #true
-    EndIf
-    ; What error checking could be done here?
-    ProcedureReturn #false
-  Else
-    ; A fatal error.
-    Abort("Write_String AllocateMemory failed", Str(fERRNO()))
-    ProcedureReturn #false ; never executed
-  EndIf
-EndProcedure
-
-; ----- Issue terminal commands with any required prefix ---------------------
-;
-; Terminal commands have a very consistent format.
-;
-; PREFIX PARAMETERS COMMAND
-;
-; PREFIX is one of the four options listed below.
-;
-; PARAMETERS are optional ASCII numeric strings separated by semicolons.
-;
-; COMMAND is usually a single alphabetic character (case sensitive).
-;
-; There are four prefixes. I don't know why there are so many options, but
-; it is what is is.
-;
-; ESC - sequence starting with ESC (\x1B)
-; CSI - Control Sequence Introducer: sequence starting with ESC [ or CSI (\x9B)
-; DCS - Device Control String: sequence starting with ESC P or DCS (\x90)
-; OSC - Operating System Command: sequence starting with ESC ] or OSC (\x9D)
-;
-; Where there are multiple prefix options I will use the ESC [ P ] variants.
-
-; CSI prefixed command:
-
-Procedure.i VT100_WRITE_CSI(s.s)
-  Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
-  If *buf
-    FillMemory(*buf, Len(s) + 8, #PB_ASCII)
-    PokeA(*buf, $1b)
-    PokeA(*buf + 1, '[')
-    string_to_buffer(s, *buf + 2)
-    Define.i sent = fWRITE(1, *buf, Len(s) + 2)
-    FreeMemory(*buf)
-    If sent = Len(s) + 2
-      ProcedureReturn #true
-    Else
-      ; error on send
-      ProcedureReturn #false
-    EndIf
-  Else
-    ; A fatal error.
-    Abort("Write_CSI_Command AllocateMemory failed", Str(fERRNO()))
-    ProcedureReturn #false ; never executed
-  EndIf
-EndProcedure
-
-; ESC prefixed command:
-
-Procedure.i VT100_WRITE_ESC(s.s)
-  Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
-  If *buf
-    FillMemory(*buf, Len(s) + 8, #PB_ASCII)
-    PokeA(*buf, $1b)
-    string_to_buffer(s, *buf + 1)
-    Define.i sent = fWRITE(1, *buf, Len(s) + 1)
-    If sent = Len(s) + 1
-      ProcedureReturn #true
-    Else
-      ; error on send
-      ProcedureReturn #false
-    EndIf
-  Else
-    ; A fatal error.
-    Abort("Write_ESC_Command AllocateMemory failed", Str(fERRNO()))
-    ProcedureReturn #false ; never executed
-  EndIf
-EndProcedure
-
-; DCS and OSC are not implemented.
-
-
-
-
-; This is DSR Device Status Report active position (6n).
-;
-; There are multiple possible DSR requests. I believe the only one I need is
-; the current cursor position. The response is a CPR Cursor Position Report.
-; Its format is ESC [ row;col R.
-;
-; This may be the only place I need to parse a response so the parse code
-; has not been factored out.
-;
-; The response values are returned via in/out parameters.
-
-Procedure.i VT100_REPORT_CURSOR_POSITION(*p.tROWCOL)
-  ; -1,-1 indicates a failure in the DSR
-  *p\row = -1
-  *p\col = -1
-  If VT100_WRITE_CSI("6n") ; DSR for CPR cursor position report 6n -> r;cR
-    Define.a char
-    Define.i i
-    Define.s s
-    ; Read a character at a time until we do not get a character (a time out
-    ; on the wait) or the character received is the end marker for the CPR.
-    While fREAD(0, @char, 1)
-      s = s + Chr(char)
-      If char = 'R'
-        Break
-      EndIf
-    Wend
-    ; Does this appear to be a valid CPR? \e[#;#R? There is no error checking
-    ; beyond this.
-    If Len(s) >= 6 And Left(s, 1) = Chr($1b) And Right(s, 1) = "R"
-      ; Collect row (digits up to the ;).
-      *p\row = 0
-      i = 3
-      While c_is_num(Mid(s, i, 1))
-        *p\row = *p\row * 10 + Val(Mid(s, i, 1))
-        i = i + 1
-      Wend
-      ; Skip past the assumed ; and collect the column (digits up to the R).
-      *p\col = 0
-      i = i + 1
-      While c_is_num(Mid(s, i, 1))
-        *p\col = *p\col * 10 + Val(Mid(s, i, 1))
-        i = i + 1
-      Wend
-      ProcedureReturn #true
-    Else
-      ; Invalid CPR format.
-      ProcedureReturn #false
-    EndIf
-  Else
-    ; Error in DSR.
-    ProcedureReturn #false
-  EndIf
-EndProcedure
-
-; Report screen size using CUD/CUF and then a CPR. The cursor position is saved
-; and restored across this operation. The behavior for CUP 999;999H is not
-; defined, so I use CUD/CUF instead
-;
-; Report_Cursor_Position might report an error, but otherwise I don't check for
-; one here.
-
-
-Procedure.i VT100_REPORT_SCREEN_DIMENSIONS(*p.tROWCOL)
-  VT100_SAVE_CURSOR
-  VT100_WRITE_CSI("999B") ; CUD cursor down this many
-  VT100_WRITE_CSI("999C") ; CUF cursor forward this many
-  VT100_REPORT_CURSOR_POSITION(*p)
-  VT100_RESTORE_CURSOR
-  ProcedureReturn #true
-EndProcedure
-
-; Display the severity and text of a message. A "message area" will be defined
-; later, for now it's the last line of the display.
-
-Procedure.i display_message(sev.s, msg.s)
-  VT100_SAVE_CURSOR
-  VT100_CURSOR_POSITION(message_area\row, message_area\col)
-  VT100_ERASE_LINE
-  VT100_WRITE_STRING(sev + ":" + msg)
-  VT100_RESTORE_CURSOR
-  ProcedureReturn #true
-EndProcedure
-
-; ----- System libraries ------------------------------------------------------
-; ----- System libraries ------------------------------------------------------
-; ----- System libraries ------------------------------------------------------
-; ----- System libraries ------------------------------------------------------
-; ----- System libraries ------------------------------------------------------
-; ----- System libraries ------------------------------------------------------
-; ----- System libraries ------------------------------------------------------
 
 ; ----- Display rows on the screen --------------------------------------------
 ;
@@ -375,11 +170,16 @@ EndProcedure
 ; On macOS read doesn't mark no input as a hard error so check for nothing read
 ; and handle as if we got an error return flagged #EAGAIN
 
+Macro VT100_READ_KEY(c)
+  fREAD(0, @c, 1)
+EndMacro
+
 Procedure.a read_key()
   Define n.i
   Define c.a
   Repeat
-    n = fREAD(0, @c, 1)
+;    n = fREAD(0, @c, 1)
+    n = VT100_READ_KEY(c)
     If n = -1
       Define e.i = fERRNO()
       If e <> #EAGAIN
@@ -400,11 +200,11 @@ Procedure.i process_key()
     Case #CTRL_D ; display screen size.
       Define.tROWCOL p
       VT100_REPORT_SCREEN_DIMENSIONS(@p)
-      display_message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col))
+      VT100_DISPLAY_MESSAGE("I", "Screen size: " + Str(p\row) + " x " + Str(p\col), @message_area)
     Case #CTRL_P
       Define.tROWCOL p
       VT100_REPORT_CURSOR_POSITION(@p)
-      display_message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col))
+      VT100_DISPLAY_MESSAGE("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col), @message_area)
     Case #CTRL_Q
       VT100_CURSOR_POSITION(10, 1)
       ProcedureReturn #true
@@ -468,7 +268,7 @@ message_area\row = message_area\row - 1
 ; Greet the user.
 VT100_ERASE_SCREEN
 cursor_home()
-display_message("I", "Welcome to kilo in PureBasic!")
+VT100_DISPLAY_MESSAGE("I", "Welcome to kilo in PureBasic!", @message_area)
 
 ; The top level mainline is really small.
 Repeat
