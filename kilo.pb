@@ -115,7 +115,8 @@ XIncludeFile "syslib/vt100.pbi"  ; VT100/ANSI terminal control API
 Global.tROWCOL   cursor_position    ; current position
 Global.tROWCOL   screen_size        ; dimensions of physical screen
 Global.tROWCOL   message_area       ; start of message output area
-
+Global.tROWCOL   top_left           ; bounds of the editable region
+Global.tROWCOL   bottom_right       ; NW corner, SE corner
 Global.tTERMIOS original_termios    ; saved to restore at exit
 Global.tTERMIOS raw_termios         ; not really used after set, kept for reference
 
@@ -136,6 +137,7 @@ Procedure abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
   ElseIf reset
     VT100_HARD_RESET
   EndIf
+  VT100_CURSOR_SHOW
   abexit(s, extra, rc)
 EndProcedure
 
@@ -146,22 +148,61 @@ EndProcedure
 ;
 ; I might try to switch to a format more like that of XEdit in CMS.
 
+Procedure.i move_cursor(c.a)
+  With cursor_position
+    Select c
+      Case 'w', 'W'               ; N
+        \row = \row - 1
+      Case 'd', 'D'               ; E
+        \col = \col + 1
+      Case 's', 'S'               ; S
+        \row = \row + 1
+      Case 'a', 'A'               ; W
+        \col = \col - 1
+    EndSelect
+    ; Keep the cursor in bounds. I check all four possible violations
+    ; since the cursor could have been horked up by a bug in other
+    ; parts of the editor.
+    If \row < 1                   ; N
+      \row = 1
+    EndIf
+    If \col > screen_size\col     ; E
+      \col = screen_size\col
+    EndIf
+    If \row > screen_size\row     ; S
+      \row = screen_size\row
+    EndIf
+    If \col < 1                   ; W
+      \col = 1
+    EndIf
+  EndWith
+EndProcedure
+
 Procedure.i cursor_home()
   VT100_CURSOR_POSITION(3, 1)
 EndProcedure
 
 Procedure.i draw_rows()
   VT100_SAVE_CURSOR
-  cursor_home()
   Define.i row
   For row = 3 To screen_size\row - 3
-    VT100_WRITE_STRING(~"~\r\n")
+    VT100_ERASE_LINE
+    VT100_WRITE_STRING(~"~")
+    VT100_WRITE_STRING(~"\r\n")
   Next row
   VT100_RESTORE_CURSOR
 EndProcedure
 
 Procedure.i refresh_screen()
+  VT100_CURSOR_HIDE
+  ;VT100_ERASE_SCREEN
+  ;VT100_CURSOR_HOME
+  cursor_home()
   draw_rows()
+  VT100_CURSOR_POSITION(cursor_position\row, cursor_position\col)
+  ;VT100_CURSOR_HOME
+  ;cursor_home()
+  VT100_CURSOR_SHOW
 EndProcedure
 
 ; ----- Read a key press and return it one byte at a time ---------------------
@@ -215,38 +256,8 @@ Procedure.i process_key()
       VT100_RESTORE_CURSOR
       Delay(2500)
       abort("You forced an abort", "", #false, #true, -1)
-    Case 'w', 'W'
-      ; Define coord.tROWCOL
-      ; VT100_GET_CURSOR(@coord)
-      ; coord\row = coord\row - 1
-      ; If coord\row < 1
-      ;   coord\row = 23
-      ; EndIf
-      ; VT100_SET_CURSOR(@coord)
-    Case 'a', 'A'
-      ; Define coord.tROWCOL
-      ; VT100_GET_CURSOR(@coord)
-      ; coord\col = coord\col - 1
-      ; If coord\col < 1
-      ;   coord\col = 79
-      ; EndIf
-      ; VT100_SET_CURSOR(@coord)
-    Case 's', 'S'
-      ; Define coord.tROWCOL
-      ; VT100_GET_CURSOR(@coord)
-      ; coord\row = coord\row + 1
-      ; If coord\row > 23
-      ;   coord\row = 1
-      ; EndIf
-      ; VT100_SET_CURSOR(@coord)
-    Case 'd', 'D'
-      ; Define coord.tROWCOL
-      ; VT100_GET_CURSOR(@coord)
-      ; coord\row = coord\col - 1
-      ; If coord\col < 1
-      ;   coord\col = 23
-      ; EndIf
-      ; VT100_SET_CURSOR(@coord)
+    Case 'w', 'W', 'a', 'A', 's', 'S', 'd', 'D' ; nesw
+      move_cursor(c)
     Default
       ; To be provided
   EndSelect
@@ -268,6 +279,7 @@ Procedure Mainline()
   ; Greet the user.
   VT100_ERASE_SCREEN
   cursor_home()
+  VT100_REPORT_CURSOR_POSITION(@cursor_position)
   VT100_DISPLAY_MESSAGE("I", "Welcome to kilo in PureBasic!", @message_area)
   ; The top level mainline is really small.
   Repeat

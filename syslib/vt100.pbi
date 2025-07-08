@@ -237,6 +237,38 @@ Macro VT100_HARD_RESET
   _VT100_WRITE_ESC("c")
 EndMacro
 
+; These are SM Set Mode and RM Reset Mode (h, l).
+;
+; There are several settings available.
+;
+;                     To Set                   To Reset
+; Mode Name           Mode          Sequence   Mode       Sequence
+;
+; Line feed/new line  New line      ESC [20h   Line feed  ESC [20l
+; Cursor key mode     Application   ESC [?1h   Cursor     ESC [?1l
+; ANSI/VT52 mode      ANSI          N/A        VT52       ESC [?2l
+; Column mode         132 Col       ESC [?3h   80 Col     ESC [?3l
+; Scrolling mode      Smooth        ESC [?4h   Jump       ESC [?4l
+; Screen mode         Reverse       ESC [?5h   Normal     ESC [?5l
+; Origin mode         Relative      ESC [?6h   Absolute   ESC [?6l
+; Wraparound          On            ESC [?7h   Off        ESC [?7l
+; Auto repeat         On            ESC [?8h   Off        ESC [?8l
+; Interlace           On            ESC [?9h   Off        ESC [?9l
+; Keypad mode         Application   ESC =      Numeric    ESC >
+; Cursor Visibile     Show          ESC ?25h   Hide       ESC ?25l
+
+; Many of these are obsolete, but a few are still useful.
+
+Macro VT100_CURSOR_HIDE
+  _VT100_WRITE_CSI("?25l")
+EndMacro
+
+Macro VT100_CURSOR_SHOW
+  _VT100_WRITE_CSI("?25h")
+EndMacro
+
+; * The last character of the sequence is a lowercase L (1548).; 
+;
 ; This is DSR Device Status Report active position (6n).
 ;
 ; There are multiple possible DSR requests. I believe the only one I need is
@@ -368,7 +400,7 @@ Procedure.i VT100_WRITE_STRING(s.s)
   EndIf
 EndProcedure
 
-; ----- Write a string to the terminal ----------------------------------------
+; ----- Determine screen size -------------------------------------------------
 ;
 ; Report screen size using CUD/CUF and then a CPR. The cursor position is saved
 ; and restored across this operation. The behavior for CUP 999;999H is not
@@ -436,5 +468,15 @@ Procedure.i VT100_SET_RAW_MODE(*raw.tTERMIOS)
   EndIf
   ProcedureReturn #true
 EndProcedure
+
+; ----- Buffered output -------------------------------------------------------
+;
+; This is mostly for screen repaints. As the buffer may need to grow the client
+; will hold the current buffer pointer and any function that updates the buffer
+; could return an updated pointer.
+
+; To be provided: I think I want most everything to write to the buffer and
+; require an explicit flush request. This would be a bit like building a
+; BMS stream.
 
 ; vt100.pbi ends here ---------------------------------------------------------
