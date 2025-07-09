@@ -96,6 +96,9 @@ DeclareModule COMMON
   Declare.i string_to_buffer(s.s, *buf)
   Declare.i buffer_to_string(*buf, s.s)
 
+  Declare.i min(a.i, b.i)                 ; NOTE: integer!
+  Declare.i max(a.i, b.i)
+
   Declare.i c_is_cntrl(c.s)
   Declare.i c_is_num(c.s)
   Declare.i c_is_alpha(c.s)
@@ -174,6 +177,24 @@ Module COMMON
       *ptr = *ptr + 1
     Wend
     ProcedureReturn #true
+  EndProcedure
+
+  ; ----- Missing integer functions ---------------------------------------------
+  ;
+  ; If I need these for floating point write minf, maxf.
+
+  Procedure.i min(a.i, b.i)
+    If a <= b
+      ProcedureReturn a
+    Endif
+    ProcedureReturn b
+  EndProcedure
+
+  Procedure max(a.i, b.i)
+    If a >= b
+      ProcedureReturn a
+    EndIf
+    ProcedureREturn b
   EndProcedure
 
   ; ----- Utility predicates ----------------------------------------------------

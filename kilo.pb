@@ -92,11 +92,8 @@ EnableExplicit
 ; These are the parts of the C system includes <.h> that I use.
 
 ; These are modules and each should have a UseModule.
-; XIncludeFile "syslib/ctype.pbi" ; not yet implemented
 XIncludeFile "syslib/errno.pbi"   ; the errors and how to decode them
 XIncludeFile "syslib/termios.pbi" ; the termios structure, defines
-; XIncludeFile "syslib/stdio.h"    ; not yet implemented
-; XIncludeFile "syslib/stdlib.h"   ; not yet implemented
 XIncludeFile "syslib/unistd.pbi" ; The parts I need.
 
 ; And this needs a UseModule as well.
@@ -165,21 +162,11 @@ Procedure.i move_cursor(c.a)
       Case 'a', 'A'               ; W
         \col = \col - 1
     EndSelect
-    ; Keep the cursor in bounds. I check all four possible violations
-    ; since the cursor could have been horked up by a bug in other
-    ; parts of the editor.
-    If \row < 1                   ; N
-      \row = 1
-    EndIf
-    If \col > screen_size\col     ; E
-      \col = screen_size\col
-    EndIf
-    If \row > screen_size\row     ; S
-      \row = screen_size\row
-    EndIf
-    If \col < 1                   ; W
-      \col = 1
-    EndIf
+    ; Keep the cursor in bounds.
+    \row = max(\row, top_left\row)
+    \row = min(\row, bottom_right\row)
+    \col = max(\col, top_left\col)
+    \col = min(\col, bottom_right\col)
   EndWith
 EndProcedure
 
@@ -190,8 +177,8 @@ EndProcedure
 Procedure.i draw_rows()
   vt100::save_cursor
   Define.i row
-  For row = 3 To screen_size\row - 3
-    vt100::ERASE_LINE
+  For row = top_left\row To bottom_right\row
+    vt100::erase_line
     vt100::write_string(~"~")
     vt100::write_string(~"\r\n")
   Next row
@@ -282,6 +269,10 @@ Procedure Mainline()
   message_area = screen_size
   message_area\col = 1
   message_area\row = message_area\row - 1
+  top_left\row = 3
+  top_left\col = 1
+  bottom_right = screen_size
+  bottom_right\row = bottom_right\row - 3
   ; Greet the user.
   vt100::erase_screen
   cursor_home()
