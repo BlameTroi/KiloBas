@@ -2,17 +2,21 @@
 
 ; work in progress
 
+;
+; It is intended that this be both "IncludeFile"ed and "UseModule"ed.
 EnableExplicit
 
-XIncludeFile "unistd.pbi"
-XIncludeFile "errno.pbi"
+;
+; It is intended that this be both "IncludeFile"ed and "UseModule"ed.
+;XIncludeFile "unistd.pbi"
+;XIncludeFile "errno.pbi"
 
 DeclareModule termios
   ; ----- Definitions from <sys/termios.h> --------------------------------------
-
+  ;
   ; There are some preprocessor checks that appear to remove some of these. I am
   ; not trying to preserve them. They check for !_POSIX_C_SOURCE || _DARWIN_C_SOURCE.
-  ; I'm creating this for my MacOS work and they seem to only remove definitions
+  ; I'm creating this for my macOS work and they seem to only remove definitions
   ; that aren't relevant. If I spot anything that needs tweaking I'll note it as
   ; it happens.
   ;
@@ -20,17 +24,17 @@ DeclareModule termios
   ;
   ; - Private entities are prefixed with "_".
   ; - Remember that hex notation for PureBasic is $xxxxxx.
-  ; - I'm not trying to be portable. This is for 64 bit MacOS code. It will
-  ;   probably run on Linux but I don't expect do so.
+  ; - I'm not trying to be portable. This is for 64 bit macOS code. It will
+  ;   probably run on Linux but I don't expect to try it myself.
   ; - As this is 64 6it, an integer (.i) is the correct value. In C the fields
   ;   below such as c_?flags resolve their type to unsigned int. As I'm not doing
   ;   arithmetic the lack of an unsigned datatype should not be a problem.
 
   ; ----- Special Control Characters --------------------------------------------
-
+  ;
   ; Special Control Characters, as indices into the c_cc[] array.
   ;
-  ;Name	     Subscript	Enabled by
+  ; Name     Subscript    Enabled by
 
   #VEOF =        0       ; ICANON
   #VEOL =        1       ; ICANON
@@ -85,7 +89,7 @@ DeclareModule termios
   #ONOEOT          = $0000008      ; discard EOT's (^D) on output)
 
   ; ----- Unimplemented features --------------------------------------------------
-
+  ;
   ; Here there was a block of code marked as "unimplemented features." I am not
   ; pulling those in. If they were used, the "programs will currently result in
   ; unexpected behaviour.
@@ -112,7 +116,7 @@ DeclareModule termios
   #MDMBUF          = $0100000      ; old name for CCAR_OFLOW
 
   ; ----- "Local" flags - dumping groud for other state ---------------------------
-
+  ;
   ;  * Warning: some flags in this structure begin with
   ;  * the letter "I" and look like they belong in the
   ;  * input flag.
@@ -135,6 +139,7 @@ DeclareModule termios
   ;                                ; yes, there's an extra hexmal place.on these
   #PENDIN          = $20000000     ; XXX retype pending input (state)
   #NOFLSH          = $80000000     ; don't flush after interrupt
+
   ; ----- Commands passed to tcsetattr() for setting the termios structure --------
 
   #TCSANOW       = 0               ; make change immediate
@@ -179,7 +184,7 @@ DeclareModule termios
   #TCION         = 4
 
   ; ----- System library function definitions -----------------------------------
-
+  ;
   ; These are not exposed yet, I'm not sure they will ever be needed.
   ;
   ; speed_t cfgetispeed(const struct termios *);
@@ -198,7 +203,7 @@ DeclareModule termios
 
 
   ; ----- The termios structure ---------------------------------------------------
-
+  ;
   ; the c typedef mappings:
   ;
   ; tcflag_t unsigned long -> .i (signed but we aren't doing arithmetic)
@@ -207,8 +212,6 @@ DeclareModule termios
   ;
   ; The c definition ends after c_ospeed. I originally had some pad bytes after
   ; but the nature of the structure is such that they should not be needed.
-  ; NOTE: for some reason I had c_i/ospeed as pointers to tTERMIOS. I am not
-  ; sure why I did that.
 
   Structure tTERMIOS
     c_iflag.i                      ; input flags
@@ -220,60 +223,41 @@ DeclareModule termios
     c_ospeed.i                     ; output speed
   EndStructure
 
+  ; ----- The termios structure ---------------------------------------------------
+  ;
+  ; The two functions in use so far.
+
   Prototype.i _pTCGETATTR(filedes.i, *termios.tTERMIOS)
   Prototype.i _pTCSETATTR(filedes.i, optional_actions.i, *termios.tTERMIOS)
-  Prototype.i _pISCNTRL(c.i)
 
   Global fTCGETATTR._pTCGETATTR
   Global fTCSETATTR._pTCSETATTR
-  Global fISCNTRL._pISCNTRL
 
-  Declare TERMIOS_dump(*t.tTERMIOS, tag.s="")
 EndDeclareModule
 
 Module termios
 
-  ; ----- Utility functions -----------------------------------------------------
-
-  ; Display TERMIOS for analysis. Note: Today I learned that structures are
-  ; passed by reference.
-
-  Procedure TERMIOS_dump(*t.tTERMIOS, tag.s="")
-    PrintN("TERMIOS: " + tag)
-    PrintN("  c_iflag = " + hex(*t\c_iflag))
-    PrintN("  c_oflag = " + hex(*t\c_oflag))
-    PrintN("  c_cflag = " + hex(*t\c_cflag))
-    PrintN("  c_lflag = " + hex(*t\c_lflag))
-    Print("  c_cc = ")
-    Define i.i
-    for i = 0 to 19
-      Print(" " + hex(*t\c_cc[i]))
-    next i
-    PrintN("")
-    PrintN("  c_ispeed = " + hex(*t\c_ispeed))
-    PrintN("  c_ospeed = " + hex(*t\c_ospeed))
-  EndProcedure
+  ; Empty as yet
 
 EndModule
 
 ; ------- Resolve function addresses ------------------------------------------
 
+UseModule termios
 If OpenLibrary(0, "libc.dylib")
-  termios::fTCGETATTR = GetFunction(0, "tcgetattr")
-  termios::fTCSETATTR = GetFunction(0, "tcsetattr")
-  termios::fISCNTRL = GetFunction(0, "iscntrl")
+  fTCGETATTR = GetFunction(0, "tcgetattr")
+  fTCSETATTR = GetFunction(0, "tcsetattr")
 Else
   PrintN("Error on open library libc!")
   End
 Endif
-If termios::fTCGETATTR = 0 OR termios::fTCSETATTR = 0 OR termios::fISCNTRL = 0
+If fTCGETATTR = 0 OR fTCSETATTR = 0
   PrintN("Error retrieving one or more functions")
-  PrintN("fTCGETATTR = " + hex(termios::fTCGETATTR))
-  PrintN("fTCSETATTR = " + hex(termios::fTCSETATTR))
-  PrintN("fISCNTRL = " + hex(termios::fISCNTRL))
+  PrintN("fTCGETATTR = " + hex(fTCGETATTR))
+  PrintN("fTCSETATTR = " + hex(fTCSETATTR))
   End
 Endif
 CloseLibrary(0)
-
+UnuseModule termios
 
 ; termios.pbi ends here ------------------------------------------------------

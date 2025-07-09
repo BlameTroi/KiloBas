@@ -19,8 +19,9 @@ EnableExplicit
 ;
 ; * Return values are almost always #true or #false.
 ;
-; There are no thread safety checks.
-
+; * There are no thread safety checks.
+;
+; It is intended that this be both "IncludeFile"ed and "UseModule"ed.
 
 DeclareModule COMMON
 
@@ -95,6 +96,7 @@ DeclareModule COMMON
   Declare.i string_to_buffer(s.s, *buf)
   Declare.i buffer_to_string(*buf, s.s)
 
+  Declare.i c_is_cntrl(c.s)
   Declare.i c_is_num(c.s)
   Declare.i c_is_alpha(c.s)
   Declare.i c_is_punctuation(c.s)
@@ -102,6 +104,7 @@ DeclareModule COMMON
   Declare.i c_is_keyword(c.s)
   Declare.i c_is_whitespace(c.s)
 
+  Declare.i a_is_cntrl(c.a)
   Declare.i a_is_num(c.a)
   Declare.i a_is_alpha(c.a)
   Declare.i a_is_punctuation(c.a)
@@ -175,8 +178,17 @@ Module COMMON
 
   ; ----- Utility predicates ----------------------------------------------------
   ;
-  ; Just a bunch of predicates. There are two versions of the various character
-  ; classification predicates: a single character string or an ASCII byte value.
+  ; Just a bunch of predicates. These are almost all redundant with ctype.h.
+  ; There are two versions of the various character classification predicates:
+  ; a single character string or an ASCII byte value.
+
+  Procedure.i c_is_cntrl(c.s)
+    If Len(c) = 1 And (c <= Chr(31) Or c = Chr(127)) 
+      ProcedureReturn #true
+    Else
+      ProcedureReturn #false
+    EndIf
+  EndProcedure
 
   Procedure.i c_is_num(c.s)
     If Len(c) = 1 And c >= "0" And c <= "9"
@@ -236,6 +248,14 @@ Module COMMON
     ProcedureReturn #false
   EndProcedure
 
+  Procedure.i a_is_cntrl(c.a)
+    If c <= 31 Or c = 127
+      ProcedureReturn #true
+    Else
+      ProcedureReturn #false
+    EndIf
+  EndProcedure
+
   Procedure.i a_is_num(c.a)
     If c >= '0' And c <= '9'
       ProcedureReturn #true
@@ -279,6 +299,9 @@ Module COMMON
     ProcedureReturn #false
   EndProcedure
 
-  ; ----- Doubtless there will be more ------------------------------------------
+  ; ----- Doubtless there will be more ----------------------------------------
 EndModule
+
+; There is no need for module initialization--yet.
+
 ; common.pbi ends here --------------------------------------------------------

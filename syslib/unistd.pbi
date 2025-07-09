@@ -132,19 +132,21 @@ Module unistd
 EndModule
 ; ------- Resolve function addresses ------------------------------------------
 
+UseModule unistd
 If OpenLibrary(0, "libc.dylib")
-  unistd::fREAD = GetFunction(0, "read")
-  unistd::fWRITE = GetFunction(0, "write")
+  fREAD = GetFunction(0, "read")
+  fWRITE = GetFunction(0, "write")
 Else
   PrintN("Error on open library libc!")
   End
 Endif
-If unistd::fREAD = 0 OR unistd::fWRITE = 0
+If fREAD = 0 OR fWRITE = 0
   PrintN("Error retrieving one or more functions")
-  PrintN("fREAD = " + hex(unistd::fREAD))
-  PrintN("fWRITE = " + hex(unistd::fWRITE))
+  PrintN("fREAD = " + hex(fREAD))
+  PrintN("fWRITE = " + hex(fWRITE))
   End
 Endif
 CloseLibrary(0)
+UnuseModule unistd
 
 ; unistd.pbi ends here -------------------------------------------------------

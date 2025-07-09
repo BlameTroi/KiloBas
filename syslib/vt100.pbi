@@ -35,6 +35,10 @@ EnableExplicit
 ;
 ; Some of the sequences are marked as "DEC private" but they are widely
 ; implemented. My reference terminal is kitty.
+;
+; It is intended that this module is only "IncldueFile"ed. The module name
+; prefix 'vt100::' in client code identifies the calls as part of this API.
+
 
 ; ----- Include system library and local interfaces ---------------------------
 
@@ -44,10 +48,13 @@ XincludeFile "termios.pbi"      ; terminal control
 
 XIncludeFile "common.pbi"       ; my tool box
 
-DeclareModule VT100
-UseModule common
-UseModule termios
+DeclareModule vt100
+
 UseModule unistd
+UseModule errno
+UseModule termios
+UseModule common
+
   ; ----- API Macros and procedures to issue VT100 commands ---------------------
   ;
   ; While I don't have everything documented yet, I have added descriptions of
@@ -181,11 +188,13 @@ UseModule unistd
 
 EndDeclareModule
 
-Module VT100
+Module vt100
 
-UseModule common
-UseModule termios
 UseModule unistd
+UseModule errno
+UseModule termios
+UseModule common
+
   ; ----- Globals ---------------------------------------------------------------
   ;
   ; I'm trying to keep this to a minimum and will probably convert this
@@ -249,7 +258,7 @@ UseModule unistd
       EndIf
     Else
       ; A fatal error.
-      abexit("Write_CSI_Command AllocateMemory failed", Str(errno::fERRNO()))
+      abexit("Write_CSI_Command AllocateMemory failed", Str(fERRNO()))
       ProcedureReturn #false ; never executed
     EndIf
   EndProcedure
@@ -272,7 +281,7 @@ UseModule unistd
       EndIf
     Else
       ; A fatal error.
-      abexit("Write_ESC_Command AllocateMemory failed", Str(errno::fERRNO()))
+      abexit("Write_ESC_Command AllocateMemory failed", Str(fERRNO()))
       ProcedureReturn #false ; never executed
     EndIf
   EndProcedure
@@ -399,7 +408,7 @@ UseModule unistd
       FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII)
       string_to_buffer(s, *buf)
       Define.i sent = fWRITE(1, *buf, Len(s))
-      Define.i err = errno::fERRNO()
+      Define.i err = fERRNO()
       FreeMemory(*buf)
       If sent = Len(s)
         ProcedureReturn #true
@@ -408,7 +417,7 @@ UseModule unistd
       ProcedureReturn #false
     Else
       ; A fatal error.
-      abexit("Write_String AllocateMemory failed", Str(errno::fERRNO()))
+      abexit("Write_String AllocateMemory failed", Str(fERRNO()))
       ProcedureReturn #false ; never executed
     EndIf
   EndProcedure
@@ -454,14 +463,14 @@ UseModule unistd
 
   Procedure.i GET_TERMIOS(*p.tTERMIOS)
     If -1 = fTCGETATTR(0, *p)
-      abexit("Enable_Raw_Mode failed tcgetattr", Str(errno::fERRNO()))
+      abexit("Enable_Raw_Mode failed tcgetattr", Str(fERRNO()))
     EndIf
     ProcedureReturn #true
   EndProcedure
 
   Procedure.i RESTORE_MODE(*p.tTERMIOS)
     If -1 = fTCSETATTR(0, #TCSAFLUSH, *p)
-      abexit("Disable_Raw_Mode failed tcsetattr", Str(errno::fERRNO()))
+      abexit("Disable_Raw_Mode failed tcsetattr", Str(fERRNO()))
     Endif
     ProcedureReturn #true
   EndProcedure
@@ -477,7 +486,7 @@ UseModule unistd
       \c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
     EndWith
     If -1 = fTCSETATTR(0, #TCSAFLUSH, *raw)
-      abexit("Enable_Raw_Mode failed tcsetattr", Str(errno::fERRNO()))
+      abexit("Enable_Raw_Mode failed tcsetattr", Str(fERRNO()))
     EndIf
     ProcedureReturn #true
   EndProcedure
@@ -493,5 +502,7 @@ UseModule unistd
   ; BMS stream.
 
 EndModule
+
+; There is no need for module initialization--yet.
 
 ; vt100.pbi ends here ---------------------------------------------------------
