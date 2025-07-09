@@ -4,6 +4,7 @@
 
 EnableExplicit
 
+DeclareModule errno
 ; ----- Errors from <errno.h> as PureBasic constants --------------------------
 
 ; There are some preprocessor checks that appear to remove some of these. I am
@@ -155,9 +156,10 @@ EnableExplicit
 Prototype _pPERROR(i.i)
 Global fPERROR._pPERROR
 Global LAST_ERRNO.i = 0
-
+Declare.i fERRNO()
+EndDeclareModule
 ; ----- System library function wrappers --------------------------------------
-
+Module errno
 ; If I am understanding this correctly, the ! lines are passed through to
 ; the C backend during compilation and so what they do there is available
 ; afterward in the code. The v_<blah> is a procedure variable named <blah>.
@@ -176,24 +178,22 @@ Procedure.i fERRNO()
   ProcedureReturn error
 EndProcedure
 
+EndModule
 ; ----- Resolve function address ----------------------------------------------
 
-Procedure _ERRNO_INITIALIZE()
   If OpenLibrary(0, "libc.dylib")  
-    fPERROR = GetFunction(0, "perror")
+    errno::fPERROR = GetFunction(0, "perror")
   Else 
     PrintN("Error on open library libc! for perror") 
-    End fERRNO()
+    End errno::fERRNO()
   Endif 
 
-  If fPERROR = 0
+  If errno::fPERROR = 0
     PrintN("Error retrieving function perror from libc")
-    End fERRNO()
+    End errno::fERRNO()
   Endif
 
   CloseLibrary(0)
-EndProcedure
 
-_ERRNO_INITIALIZE()
 
 ; errno.pbi ends here ---------------------------------------------------------
