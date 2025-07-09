@@ -1,14 +1,16 @@
 ; unistd.pbi -- everything from the MacOS unistd.h without the level checks.
 
-; work in progress
-
-; What's in here:
+; ----- Overview --------------------------------------------------------------
 ;
-; I've tried to port the basic file stream and file system functions (eg.,
+; Those parts of <unistd.h> that I might need.
+;
+; I've tried to expose the basic file stream and file system functions (eg.,
 ; `chown`). There is some quesswork here. Obvious Darwin extensions have been
 ; dropped. There are a lot of process/thread/pipe controlling functions that
 ; really aren't appropriate for the sort of work I expect to do with PureBasic.
 ; If these functions are needed, write a separate module to access them.
+;
+; It is intended that this be both "IncludeFile"ed and "UseModule"ed.
 
 EnableExplicit
 
@@ -22,12 +24,12 @@ DeclareModule unistd
   #STDERR_FILENO = 2; standard error file descriptor
   #STDERR        = 2
 
-  ; ----- Standard file decriptors ---------------------------------------------
-
+  ; ----- Type mapping C <-> PureBasic -----------------------------------------
+  ;
   ; Type mapping:
   ;
-  ; char * is a string, there are some decorations in the C headers for how many
-  ; bytes are expected, typically based on a following parameter.
+  ; char * is a string, there are some decorations in the C headers for how
+  ;        many bytes are expected, typically based on a following parameter.
   ;
   ; uid_t is a 32 bit unsigned integer.
   ;
@@ -41,11 +43,12 @@ DeclareModule unistd
   ;
   ; Where an argument is flagged as const in the C header, I uppercase its
   ; placeholder variable name.
-
-  ; Found this on GitHub and it's a good use case for macros. I should probably redo these
-  ; prototypes.
+  ;
+  ; I found the following on GitHub and it's a good use case for macros.
+  ; I should probably redo these prototypes.
   ;
   ;{ from /usr/include/x86_64-linux-gnu/bits/types.h and /usr/include/x86_64-linux-gnu/bits/typesizes.h
+  ;
   ; Macro dev_t : q : EndMacro 
   ; Macro ino_t : i : EndMacro 
   ; Macro mode_t : l : EndMacro 
@@ -59,8 +62,9 @@ DeclareModule unistd
   ; Macro size_t : i : EndMacro 
 
   ; As strings in PureBasic use two bytes per character, I'm allocating a byte
-  ; buffer of ascii (.a) which is basically an unsigned very short integer. I picked
-  ; 2048 as the size as this is the value of LINE_MAX in syslimits.h on my system.
+  ; buffer of ascii (.a) which is basically an unsigned very short integer. I
+  ; picked 2048 as the size as this is the value of LINE_MAX in syslimits.h on
+  ; my system.
 
   #tT2KBUFFER = 2048
   Structure tTCBUFFER
@@ -73,22 +77,27 @@ DeclareModule unistd
   ; this may be better as a separate include.
 
   ; ----- System library prototype definitions ------------------------------------
+  ;
+  ; I've roughed in prototypes for all the functions I believe I might ever
+  ; use. So far all I need is read() and write(). I've added a wrapper over
+  ; write() to take a string, copy it to a byte buffer, and pass that buffer to
+  ; write().
 
-  ; Prototype.i _pCHDIR(D.s) 
-  ; Prototype.i _pCHOWN(D.s, uid.i, gid.i) 
-  ; Prototype.i _pOPEN(PATH.s, oflag.i) 
-  ; Prototype.i _pCLOSE(filedes.i) 
-  ; Prototype.s pGETCWD(result_buf.s, size_of_buf.i) 
-  ; Prototype.s pGETLOGIN() 
-  ; Prototype.i _pGETPID() 
-  ; Prototype.i _pISATTY(filedes.i) 
-  ; Prototype.i _pRMDIR(D.s) 
-  ; Prototype.i _pSLEEP(secs.i) 
+  ; Prototype.i _pCHDIR(D.s)
+  ; Prototype.i _pCHOWN(D.s, uid.i, gid.i)
+  ; Prototype.i _pOPEN(PATH.s, oflag.i)
+  ; Prototype.i _pCLOSE(filedes.i)
+  ; Prototype.s pGETCWD(result_buf.s, size_of_buf.i)
+  ; Prototype.s pGETLOGIN()
+  ; Prototype.i _pGETPID()
+  ; Prototype.i _pISATTY(filedes.i)
+  ; Prototype.i _pRMDIR(D.s)
+  ; Prototype.i _pSLEEP(secs.i)
   ; Prototype.s pTTYNAME(filedes.i)  ; *** legacy, prefer _r ***
-  ; Prototype.i _pTTYNAME_R(filedes.i, namebuffer.s, len.i) 
-  ; Prototype.i _pFCHDIR(filedes.i) 
-  ; Prototype.i _pGETHOSTID() 
-  ; Prototype.i _pGETHOSTNAME(array_of_ascii_bytes.a, namelen.i) 
+  ; Prototype.i _pTTYNAME_R(filedes.i, namebuffer.s, len.i)
+  ; Prototype.i _pFCHDIR(filedes.i)
+  ; Prototype.i _pGETHOSTID()
+  ; Prototype.i _pGETHOSTNAME(array_of_ascii_bytes.a, namelen.i)
 
   Prototype.i _pREAD(filedes.i, *c.tTCBUFFER, len.i)
   Prototype.i _pWRITE(filedes.i, *c.tTCBUFFER, len.i)
@@ -107,6 +116,7 @@ Module unistd
     Static buf.tTCBUFFER
 
     If len(s) > #tT2KBUFFER
+      ; TODO: support passing through the buffer.
       PrintN("***fWRITES buffer overflow***")
       PrintN("***fWRITES buffer overflow***")
       PrintN("***fWRITES buffer overflow***")
@@ -117,8 +127,8 @@ Module unistd
       ProcedureReturn 0
     EndIf
 
-    Define i.i = 1
-    Define j.i = 0
+    Define.i i = 1
+    Define.i j = 0
 
     While i <= len(s)
       buf\c[j] = Asc(Mid(s, i, 1))
@@ -126,11 +136,12 @@ Module unistd
       j = j + 1
     Wend
 
-    ProcedureReturn unistd::fWrite(filedes, buf, i)
+    ProcedureReturn fWrite(filedes, buf, i)
   EndProcedure
 
 EndModule
-; ------- Resolve function addresses ------------------------------------------
+
+; ------- Expose read() and write() -------------------------------------------
 
 UseModule unistd
 If OpenLibrary(0, "libc.dylib")

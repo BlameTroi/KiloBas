@@ -1,16 +1,19 @@
 ; errno.pbi -- everything from the MacOS errno.h without the level checks.
 
-; work in progress
-
+; ----- Overview --------------------------------------------------------------
+;
+; Those parts of <errno.h> that I might need. Some of these may be redundant
+; with PureBasic built in procedures, but I haven't found any so far.
 ;
 ; It is intended that this be both "IncludeFile"ed and "UseModule"ed.
+
 EnableExplicit
 
 DeclareModule errno
   ; ----- Errors from <errno.h> as PureBasic constants --------------------------
 
-  ; There are some preprocessor checks that appear to remove some of these. I am
-  ; not bothering with them. The numbers are constants.
+  ; There are some preprocessor checks that appear to remove some of these.
+  ; I am not bothering with them. The numbers are constants.
 
   #EPERM           = 1               ; Operation not permitted
   #ENOENT          = 2               ; No such file or directory
@@ -152,27 +155,29 @@ DeclareModule errno
   #EQFULL          = 106             ; Interface output queue is full
   #ELAST           = 106             ; Must be equal largest errno
 
-  ; ----- System libraries ------------------------------------------------------
+  ; ----- Expose errno() and perror() -------------------------------------------
 
-  ; TODO: This is more properly in stdio.h
-  Prototype _pPERROR(i.i)
+  Prototype _pPERROR(*ptr=0)
   Global fPERROR._pPERROR
   Global LAST_ERRNO.i = 0
   Declare.i fERRNO()
+
 EndDeclareModule
+
 ; ----- System library function wrappers --------------------------------------
+
 Module errno
-  ; If I am understanding this correctly, the ! lines are passed through to
-  ; the C backend during compilation and so what they do there is available
+  ; If I am understanding this correctly, the ! lines are passed through to the
+  ; C backend during compilation and so what they do there is available
   ; afterward in the code. The v_<blah> is a procedure variable named <blah>.
 
   ; Get `errno` using C. Note that `errno` is not reset to zero by the library
-  ; code between function calls. It is only set when an error occurs, so I clear
-  ; it here after I retrieve it.
+  ; code between function calls. It is only set when an error occurs, so
+  ; I clear it here after I retrieve it.
 
   Procedure.i fERRNO()
-    Define error.i
-    !#include "errno.h"
+    Define.i error
+    !#include <errno.h>
     !extern int errno;
     !v_error=errno;
     !errno=0;
@@ -181,7 +186,8 @@ Module errno
   EndProcedure
 
 EndModule
-; ----- Resolve function address ----------------------------------------------
+
+; ----- Expose perror ---------------------------------------------------------
 
 UseModule errno
 If OpenLibrary(0, "libc.dylib")  
@@ -195,7 +201,7 @@ If fPERROR = 0
   PrintN("Error retrieving function perror from libc")
   End fERRNO()
 Endif
-
 CloseLibrary(0)
 UnuseModule errno
+
 ; errno.pbi ends here ---------------------------------------------------------

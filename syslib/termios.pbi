@@ -1,24 +1,21 @@
 ; termios.pbi -- sys/termios.h for PureBasic.
 
-; work in progress
-
+; ----- Overview --------------------------------------------------------------
+;
+; Those parts of <termios.h> that I might need.
 ;
 ; It is intended that this be both "IncludeFile"ed and "UseModule"ed.
+
 EnableExplicit
-
-;
-; It is intended that this be both "IncludeFile"ed and "UseModule"ed.
-;XIncludeFile "unistd.pbi"
-;XIncludeFile "errno.pbi"
 
 DeclareModule termios
   ; ----- Definitions from <sys/termios.h> --------------------------------------
   ;
-  ; There are some preprocessor checks that appear to remove some of these. I am
-  ; not trying to preserve them. They check for !_POSIX_C_SOURCE || _DARWIN_C_SOURCE.
-  ; I'm creating this for my macOS work and they seem to only remove definitions
-  ; that aren't relevant. If I spot anything that needs tweaking I'll note it as
-  ; it happens.
+  ; There are some preprocessor checks that appear to remove some of this. I am
+  ; not trying to preserve them. They check for either !_POSIX_C_SOURCE or
+  ; _DARWIN_C_SOURCE. I'm creating this for my macOS work and they seem to only
+  ; remove definitions that aren't relevant. If I spot anything that needs
+  ; tweaking I'll note it as it happens.
   ;
   ; Some coding notes:
   ;
@@ -201,7 +198,6 @@ DeclareModule termios
   ; int     cfsetspeed(struct termios *, speed_t);
   ; pid_t tcgetsid(int);
 
-
   ; ----- The termios structure ---------------------------------------------------
   ;
   ; the c typedef mappings:
@@ -223,7 +219,7 @@ DeclareModule termios
     c_ospeed.i                     ; output speed
   EndStructure
 
-  ; ----- The termios structure ---------------------------------------------------
+  ; ----- Expose tcgetattr and tcsetattr ------------------------------------------
   ;
   ; The two functions in use so far.
 
@@ -241,7 +237,7 @@ Module termios
 
 EndModule
 
-; ------- Resolve function addresses ------------------------------------------
+; ------- Expose tcgetattr and tcsetattr --------------------------------------
 
 UseModule termios
 If OpenLibrary(0, "libc.dylib")

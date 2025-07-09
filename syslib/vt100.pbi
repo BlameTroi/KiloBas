@@ -1,9 +1,5 @@
 ; vt100.pbi - a bunch of VT100 escape sequences from the Dec VT100 manual.
 
-EnableExplicit
-
-; work in progress
-
 ; ----- Overview --------------------------------------------------------------
 ;
 ; A wrapper for using VT100/ANSI terminal control sequences instead of the
@@ -36,6 +32,8 @@ EnableExplicit
 ;
 ; It is intended that this module is only "IncldueFile"ed. The module name
 ; prefix 'vt100::' in client code identifies the calls as part of this API.
+
+EnableExplicit
 
 ; ----- Include system library and local interfaces ---------------------------
 
@@ -202,7 +200,7 @@ DeclareModule vt100
     fREAD(0, @c, 1)
   EndMacro
 
-  ; ----- Forward declarations --------------------------------------------------
+  ; ----- Expose API functions --------------------------------------------------
 
   ; Primary API procedures for vt100.
 
@@ -211,8 +209,7 @@ DeclareModule vt100
   Declare.i report_screen_dimensions(*p.tROWCOL)
   Declare.i display_message(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
 
-  ; These need to be wrapped in the module and should not be called
-  ; directly.
+  ; These need to be wrapped in the module and should not be called directly.
 
   Declare.i get_termios(*p.tTERMIOS)
   Declare.i restore_mode(*p.tTERMIOS)
@@ -240,8 +237,8 @@ Module vt100
   ; ----- Command sequence prefix helpers. ------------------------------------
   ;
   ; Since embedding an escape input a literal string seems to require a string
-  ; concatenation, I decided to provide helpers that put the proper prefix
-  ; into a buffer followed by the terminal command.
+  ; concatenation, I decided to provide helpers that put the proper prefix into
+  ; a buffer followed by the terminal command.
 
   ; Apply the CSI prefix to a parameter and command string and send it to the
   ; terminal.
@@ -380,12 +377,12 @@ Module vt100
 
   ; ----- Determine screen size -------------------------------------------------
   ;
-  ; Report screen size using CUD/CUF and then a CPR. The cursor position is saved
-  ; and restored across this operation. The behavior for CUP 999;999H is not
-  ; defined, so I use CUD/CUF instead
+  ; Report screen size using CUD/CUF and then a CPR. The cursor position is
+  ; saved and restored across this operation. The behavior for CUP 999;999H is
+  ; not defined, so I use CUD/CUF instead
   ;
-  ; Report_Cursor_Position might report an error, but otherwise I don't check for
-  ; one here.
+  ; Report_Cursor_Position might report an error, but otherwise I don't check
+  ; for errors.
 
   Procedure.i report_screen_dimensions(*p.tROWCOL)
     save_cursor
@@ -398,8 +395,8 @@ Module vt100
 
   ; ----- Standard error/info message output ------------------------------------
   ;
-  ; Display the severity and text of a message at a row/col. Optionally the message
-  ; could be written to a log (from common.pbi).
+  ; Display the severity and text of a message at a row/col. Optionally the
+  ; message could be written to a log (from common.pbi).
 
   Procedure.i display_message(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
     save_cursor
@@ -413,9 +410,9 @@ Module vt100
 
   ; ----- Disable raw mode/restore prior saved terminal configuration -----------
   ;
-  ; If the client wants to restore the terminal to its configuration before
-  ; it was placed in raw mode, get_termios can be used to retrieve
-  ; the current TERMIOS structure prior to set_raw_mode.
+  ; If the client wants to restore the terminal to its configuration before it
+  ; was placed in raw mode, get_termios can be used to retrieve the current
+  ; TERMIOS structure prior to set_raw_mode.
 
   Procedure.i get_termios(*p.tTERMIOS)
     If -1 = fTCGETATTR(0, *p)
@@ -449,13 +446,13 @@ Module vt100
 
   ; ----- Buffered output -------------------------------------------------------
   ;
-  ; This is mostly for screen repaints. As the buffer may need to grow the client
-  ; will hold the current buffer pointer and any function that updates the buffer
-  ; could return an updated pointer.
+  ; This is mostly for screen repaints. As the buffer may need to grow the
+  ; client will hold the current buffer pointer and any function that updates
+  ; the buffer could return an updated pointer.
 
   ; To be provided: I think I want most everything to write to the buffer and
-  ; require an explicit flush request. This would be a bit like building a
-  ; BMS stream.
+  ; require an explicit flush request. This would be a bit like building a BMS
+  ; stream.
 
 EndModule
 

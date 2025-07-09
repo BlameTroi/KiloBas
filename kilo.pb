@@ -1,9 +1,5 @@
 ; kilo.pb -- a PureBasic walkthrough of the kilo.c "editor in 1k lines" tutorial
 
-EnableExplicit
-
-; work in progress.
-
 ; ----- Motivation and overview -----------------------------------------------
 ;
 ; * Project description:
@@ -80,6 +76,8 @@ EnableExplicit
 ;   Functions that really don't need to report success or failure are still
 ;   declared as returning a value as well.
 
+EnableExplicit
+
 ; ----- Include system library interfaces -------------------------------------
 ;
 ; I'm unclear on how to best set the include path. Here I'm assuming that the
@@ -87,21 +85,13 @@ EnableExplicit
 ; other they do not specify a directory. This works as I want it to so I'm not
 ; planning to use `IncludePath`.
 
-; System include libraries (libc):
-;
-; These are the parts of the C system includes <.h> that I use.
-
-; These are modules and each should have a UseModule.
 XIncludeFile "syslib/errno.pbi"   ; the errors and how to decode them
 XIncludeFile "syslib/termios.pbi" ; the termios structure, defines
 XIncludeFile "syslib/unistd.pbi" ; The parts I need.
 
-; And this needs a UseModule as well.
 XIncludeFile "syslib/common.pbi" ; common macros, constants, and procedures
 
-; More APIish modules do not have UseModule, leaving the module name
-; for both scoping and readability.
-XIncludeFile "syslib/vt100.pbi"  ; VT100/ANSI terminal control API
+XIncludeFile "syslib/vt100.pbi"  ; VT100/ANSI terminal control API - no UseModule
 
 UseModule errno
 UseModule termios
@@ -171,7 +161,7 @@ Procedure.i move_cursor(c.a)
 EndProcedure
 
 Procedure.i cursor_home()
-  vt100::cursor_position(3, 1)
+  vt100::cursor_position(top_left\row, top_left\col)
 EndProcedure
 
 Procedure.i draw_rows()
@@ -187,13 +177,9 @@ EndProcedure
 
 Procedure.i refresh_screen()
   vt100::cursor_hide
-  ;vt100::erase_screen
-  ;vt100::cursor_home
   cursor_home()
   draw_rows()
   vt100::cursor_position(cursor_position\row, cursor_position\col)
-  ;vt100::cursor_home
-  ;cursor_home()
   vt100::cursor_show
 EndProcedure
 
@@ -204,12 +190,12 @@ EndProcedure
 ; of things such as PF keys is still to do.
 
 Procedure.a read_key()
-  Define n.i
-  Define c.a
+  Define.i n
+  Define.a c
   Repeat
     n = vt100::read_key(c)
     If n = -1
-      Define e.i = fERRNO()
+      Define.i e = fERRNO()
       If e <> #EAGAIN
         Abort("Editor_Read_Key", Str(e))
       Else
@@ -229,7 +215,7 @@ EndProcedure
 
 
 Procedure.i process_key()
-  Define c.a = read_key()
+  Define.a c = read_key()
   Select c
     Case #CTRL_D ; display screen size.
       Define.tROWCOL p

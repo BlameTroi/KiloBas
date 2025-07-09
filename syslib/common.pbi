@@ -1,9 +1,5 @@
 ; common.pbi -- a collection of things I expect to be available
 
-EnableExplicit
-
-; work in progress
-
 ; ----- Overview --------------------------------------------------------------
 ;
 ; This is a "catch all" include file for common definitions and procedures.
@@ -23,7 +19,9 @@ EnableExplicit
 ;
 ; It is intended that this be both "IncludeFile"ed and "UseModule"ed.
 
-DeclareModule COMMON
+EnableExplicit
+
+DeclareModule common
 
   ; ----- Key press and response mapping ----------------------------------------
   ;
@@ -64,9 +62,9 @@ DeclareModule COMMON
 
   ; ----- Various coordinate structures -----------------------------------------
   ;
-  ; VT100 and (N/PD)CURSES both use row,col (y,x) coordinates from the upper left
-  ; cornder. Use this for display coordinates to avoid x,y <-> y,x muscle memory
-  ; bugs.
+  ; VT100 and (N/PD)CURSES both use row,col (y,x) coordinates from the upper
+  ; left cornder. Use this for display coordinates to avoid x,y <-> y,x muscle
+  ; memory bugs.
 
   Structure tROWCOL
     row.i
@@ -117,7 +115,7 @@ DeclareModule COMMON
 
 EndDeclareModule
 
-Module COMMON
+Module common
 
   ; ----- Abnormal program termination ------------------------------------------
   ;
@@ -152,8 +150,8 @@ Module COMMON
 
   ; ----- Copy a native string into a C string and back -------------------------
   ;
-  ; These are very trusting routines. They make no overflow checks. As the caller
-  ; provides the buffer, length verification is its responsibility.
+  ; These are very trusting routines. They make no overflow checks. As the
+  ; caller provides the buffer, length verification is its responsibility.
   ;
   ; They always return #true.
 
@@ -321,6 +319,7 @@ Module COMMON
   EndProcedure
 
   ; ----- Doubtless there will be more ----------------------------------------
+
 EndModule
 
 ; There is no need for module initialization--yet.
