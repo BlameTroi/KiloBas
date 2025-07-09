@@ -9,12 +9,10 @@ EnableExplicit
 ; A wrapper for using VT100/ANSI terminal control sequences instead of the
 ; ubiquitus (N/PD)CURSES.
 ;
-; All of the API procedures are prefixed VT100. Any procedures not meant for
-; client code use are prefixed _VT100.
-;
-; The initial versions of this were created while I was working through the
-; Kilo editor tutorial. The tutorial is C based and I'm using PureBasic, so my
-; code quickly diverged from the original.
+; All of the API procedures should be referenced using the module name prefix of
+; `vt100::`. Any procedure name prefixed with an underscore (_) is meant to be
+; internal use only. I have to expose them in the module declaration as the
+; mnemonic command macros use them.
 ;
 ; All procedures are declared as returning an integer even if there is no
 ; meaningful status to return. This will be #true for success and #false for
@@ -39,176 +37,21 @@ EnableExplicit
 ; It is intended that this module is only "IncldueFile"ed. The module name
 ; prefix 'vt100::' in client code identifies the calls as part of this API.
 
-
 ; ----- Include system library and local interfaces ---------------------------
 
 XIncludeFile "unistd.pbi"       ; primarily for read() and write()
 XIncludeFile "errno.pbi"        ; you never know
 XincludeFile "termios.pbi"      ; terminal control
-
 XIncludeFile "common.pbi"       ; my tool box
+
+; ----- Exposed procedures, macros, and constants -----------------------------
 
 DeclareModule vt100
 
-UseModule unistd
-UseModule errno
-UseModule termios
-UseModule common
-
-  ; ----- API Macros and procedures to issue VT100 commands ---------------------
-  ;
-  ; While I don't have everything documented yet, I have added descriptions of
-  ; most command sequences for these macros and the more complex procedures that
-  ; follow.
-  ;
-  ; These procedures and macros are roughly ordered by increasing complexity.
-  ;
-  ; Once I saw that I had several one line procedures to wrap commands, I decided
-  ; to experiment with PureBasic macros. They work well and except for the
-  ; missing empty parentheses of procedures that take no parameters they look and
-  ; behave just like procedure calls.
-
-  ; ----- Read from the terminal ------------------------------------------------
-  ;
-  ; Wrap read() for terminal I/O.
-
-  Macro READ_KEY(c)
-    fREAD(0, @c, 1)
-  EndMacro
-
-  ; This is an ED Erase in Display (J). It takes the following parameters:
-  ;
-  ; <NULL> Same as 0.
-  ;      0 Erase from the active position to end of display.
-  ;      1 Erase from start of the display to the active position.
-  ;      2 Erase the entire screen.
-  ;
-  ; The cursor position is not updated.
-
-  Macro ERASE_SCREEN
-    vt100::_WRITE_CSI("2J")
-  EndMacro
-
-  ; This is a CUP CUrsor Position (H). It takes the following parameters:
-  ;
-  ;  <NULL> Move cursor to home
-  ;     1;1 Move cursor to home
-  ; ROW;COL Move cursor to that ROW and COLUMN.
-  ;
-  ; ROW and COLUMN appear to be consistently one based. This can be changed but
-  ; I'm comfortable assuming the default.
-  ;
-  ; Homing the cursor is a frequent enough operation to warrant a separate
-  ; macro.
-
-  Macro CURSOR_HOME
-    vt100::_WRITE_CSI("H")
-  EndMacro
-
-  ; Row and column should be integers.
-
-  Macro CURSOR_POSITION(row, col)
-    vt100::_WRITE_CSI(Str(row) + ";" + Str(col) + "H")
-  EndMacro
-
-  ; These are DECSC and DECRC Save/Restore Cursor (7/8).
-  ;
-  ; Save or Restore the Cursor's position along with the graphic rendition (SGR)
-  ; and character set (SGS).
-  ;
-  ; These are paired: a DECRC should have been preceded by a DECSC.
-
-  Macro SAVE_CURSOR
-    vt100::_WRITE_ESC("7")
-  EndMacro
-
-  Macro RESTORE_CURSOR
-    vt100::_WRITE_ESC("8")
-  EndMacro
-
-  ; This is an EL Erase in Line (K).
-  ;
-  ; It takes no parameters and erases from the cursor position (inclusive) to
-  ; the end of the cursor's line (row).
-
-  Macro ERASE_LINE
-    vt100::_WRITE_CSI("K") ; EL Erase in line from cursor to eol
-  EndMacro
-
-  ; This is RIS Reset to Initial State (c).
-  ;
-  ; The terminal is returned to its "just powered on" state. On a hardware VT100
-  ; this would also fire POST.
-
-  Macro HARD_RESET
-    vt100::_WRITE_ESC("c")
-  EndMacro
-
-  ; These are SM Set Mode and RM Reset Mode (h, l).
-  ;
-  ; There are several settings available.
-  ;
-  ;                     To Set                   To Reset
-  ; Mode Name           Mode          Sequence   Mode       Sequence
-  ;
-  ; Line feed/new line  New line      ESC [20h   Line feed  ESC [20l
-  ; Cursor key mode     Application   ESC [?1h   Cursor     ESC [?1l
-  ; ANSI/VT52 mode      ANSI          N/A        VT52       ESC [?2l
-  ; Column mode         132 Col       ESC [?3h   80 Col     ESC [?3l
-  ; Scrolling mode      Smooth        ESC [?4h   Jump       ESC [?4l
-  ; Screen mode         Reverse       ESC [?5h   Normal     ESC [?5l
-  ; Origin mode         Relative      ESC [?6h   Absolute   ESC [?6l
-  ; Wraparound          On            ESC [?7h   Off        ESC [?7l
-  ; Auto repeat         On            ESC [?8h   Off        ESC [?8l
-  ; Interlace           On            ESC [?9h   Off        ESC [?9l
-  ; Keypad mode         Application   ESC =      Numeric    ESC >
-  ; Cursor Visibile     Show          ESC ?25h   Hide       ESC ?25l
-
-  ; Many of these are obsolete, but a few are still useful.
-
-  Macro CURSOR_HIDE
-    vt100::_WRITE_CSI("?25l")
-  EndMacro
-
-  Macro CURSOR_SHOW
-    vt100::_WRITE_CSI("?25h")
-  EndMacro
-
-
-  ; ----- Forward declarations --------------------------------------------------
-  Declare.i REPORT_CURSOR_POSITION(*p.tROWCOL)
-  Declare.i WRITE_STRING(s.s)
-  Declare.i REPORT_SCREEN_DIMENSIONS(*p.tROWCOL)
-  Declare.i DISPLAY_MESSAGE(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
-  Declare.i GET_TERMIOS(*p.tTERMIOS)
-  Declare.i RESTORE_MODE(*p.tTERMIOS)
-  Declare.i SET_RAW_MODE(*raw.tTERMIOS)
-  Declare.i _WRITE_CSI(s.s)
-  Declare.i _WRITE_ESC(s.s)
-
-EndDeclareModule
-
-Module vt100
-
-UseModule unistd
-UseModule errno
-UseModule termios
-UseModule common
-
-  ; ----- Globals ---------------------------------------------------------------
-  ;
-  ; I'm trying to keep this to a minimum and will probably convert this
-  ; to a PureBasic Module to control scoping.
-  ;
-  ; The TERMIOS pointers hold references to allocated storage and ideally they
-  ; will be released at program termination. PureBasic defaults these global
-  ; variables to 0/nil so we can safely trust the various boolean flags.
-
-  Global.i INITIALIZED        ; have we loaded?
-  Global.i IS_RAW             ; has the terminal been initialized for raw
-  Global  *ORIGINAL_TERMIOS   ; used to restore the terminal for cooked
-  Global  *RAW_TERMIOS        ; built to put the terminal into raw
-  Global.i ERRNO              ; cached just in case
+  UseModule unistd
+  UseModule errno
+  UseModule termios
+  UseModule common
 
   ; ----- Command sequences are identified by a prefix -------------------------
   ;
@@ -236,12 +79,174 @@ UseModule common
   ;           "CSI 10,3 H"   moves the cursor to row 10 column 3.
   ;           "ESC c"        performs a hard reset of the terminal.
   ;
-  ; These procedures should not be called by client code.
+  ; So far DCS and OSC are not needed and no helpers for them exist.
+  ;
+  ; Thes various _WRITE_xxx procedures should never be called direclty by the
+  ; client. Create a new wrapper macro if you need a new command.
+
+  ; ----- API Macros and procedures to issue VT100 commands ---------------------
+  ;
+  ; While I don't have everything documented yet, I have added descriptions of
+  ; most command sequences for these macros and the more complex procedures
+  ; that follow.
+  ;
+  ; These procedures and macros are roughly ordered by increasing complexity.
+  ;
+  ; Where possible mnemonic macros are used to avoid chasing typos in command
+  ; string literals. Note that these use the module prefix `vt100::` in the
+  ; generated code. My APIs expect to be included but not "UseModule"ed.
+
+  ; This is an ED Erase in Display (J). It takes the following parameters:
+  ;
+  ; <NULL> Same as 0.
+  ;      0 Erase from the active position to end of display.
+  ;      1 Erase from start of the display to the active position.
+  ;      2 Erase the entire screen.
+  ;
+  ; The cursor position is not updated.
+
+  Macro erase_screen
+    vt100::_write_csi("2J")
+  EndMacro
+
+  ; This is a CUP CUrsor Position (H). It takes the following parameters:
+  ;
+  ;  <NULL> Move cursor to home
+  ;     1;1 Move cursor to home
+  ; ROW;COL Move cursor to that ROW and COLUMN.
+  ;
+  ; ROW and COLUMN appear to be consistently one based. This can be changed but
+  ; I'm comfortable assuming the default.
+  ;
+  ; Homing the cursor is a frequent enough operation to warrant a separate
+  ; macro.
+
+  Macro cursor_home
+    vt100::_write_csi("H")
+  EndMacro
+
+  ; Row and column should be integers.
+
+  Macro cursor_position(row, col)
+    vt100::_write_csi(Str(row) + ";" + Str(col) + "H")
+  EndMacro
+
+  ; These are DECSC and DECRC Save/Restore Cursor (7/8).
+  ;
+  ; Save or Restore the Cursor's position along with the graphic rendition (SGR)
+  ; and character set (SGS).
+  ;
+  ; These are paired: a DECRC should have been preceded by a DECSC.
+
+  Macro save_cursor
+    vt100::_write_esc("7")
+  EndMacro
+
+  Macro restore_cursor
+    vt100::_write_esc("8")
+  EndMacro
+
+  ; This is an EL Erase in Line (K).
+  ;
+  ; It takes no parameters and erases from the cursor position (inclusive) to
+  ; the end of the cursor's line (row).
+
+  Macro erase_line
+    vt100::_write_csi("K") ; EL Erase in line from cursor to eol
+  EndMacro
+
+  ; This is RIS Reset to Initial State (c).
+  ;
+  ; The terminal is returned to its "just powered on" state. On a hardware VT100
+  ; this would also fire POST.
+
+  Macro hard_reset
+    vt100::_write_esc("c")
+  EndMacro
+
+  ; These are SM Set Mode and RM Reset Mode (h, l).
+  ;
+  ; There are several settings available. I believe most of these are obsolete,
+  ; but a few are still useful.
+  ;
+  ;                     To Set                   To Reset
+  ; Mode Name           Mode          Sequence   Mode       Sequence
+  ;
+  ; Line feed/new line  New line      ESC [20h   Line feed  ESC [20l
+  ; Cursor key mode     Application   ESC [?1h   Cursor     ESC [?1l
+  ; ANSI/VT52 mode      ANSI          N/A        VT52       ESC [?2l
+  ; Column mode         132 Col       ESC [?3h   80 Col     ESC [?3l
+  ; Scrolling mode      Smooth        ESC [?4h   Jump       ESC [?4l
+  ; Screen mode         Reverse       ESC [?5h   Normal     ESC [?5l
+  ; Origin mode         Relative      ESC [?6h   Absolute   ESC [?6l
+  ; Wraparound          On            ESC [?7h   Off        ESC [?7l
+  ; Auto repeat         On            ESC [?8h   Off        ESC [?8l
+  ; Interlace           On            ESC [?9h   Off        ESC [?9l
+  ; Keypad mode         Application   ESC =      Numeric    ESC >
+  ; Cursor Visibile     Show          ESC ?25h   Hide       ESC ?25l
+
+  Macro cursor_hide
+    vt100::_write_csi("?25l")
+  EndMacro
+
+  Macro cursor_show
+    vt100::_write_csi("?25h")
+  EndMacro
+
+  ; ----- Read from the terminal ------------------------------------------------
+  ;
+  ; Wrap read() for terminal I/O. This isn't strictly needed and the function is
+  ; actually in unistd, but I like the consistency.
+
+  Macro read_key(c)
+    fREAD(0, @c, 1)
+  EndMacro
+
+  ; ----- Forward declarations --------------------------------------------------
+
+  ; Primary API procedures for vt100.
+
+  Declare.i report_cursor_position(*p.tROWCOL)
+  Declare.i write_string(s.s)
+  Declare.i report_screen_dimensions(*p.tROWCOL)
+  Declare.i display_message(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
+
+  ; These need to be wrapped in the module and should not be called
+  ; directly.
+
+  Declare.i get_termios(*p.tTERMIOS)
+  Declare.i restore_mode(*p.tTERMIOS)
+  Declare.i set_raw_mode(*raw.tTERMIOS)
+
+  ; These should never be directly called by the client. They are included to
+  ; support the macros that need them.
+
+  Declare.i _write_csi(s.s)
+  Declare.i _write_esc(s.s)
+
+EndDeclareModule
+
+Module vt100
+
+  UseModule unistd
+  UseModule errno
+  UseModule termios
+  UseModule common
+
+  ; ----- Globals ---------------------------------------------------------------
+  ;
+  ; None as yet.
+
+  ; ----- Command sequence prefix helpers. ------------------------------------
+  ;
+  ; Since embedding an escape input a literal string seems to require a string
+  ; concatenation, I decided to provide helpers that put the proper prefix
+  ; into a buffer followed by the terminal command.
 
   ; Apply the CSI prefix to a parameter and command string and send it to the
   ; terminal.
 
-  Procedure.i _WRITE_CSI(s.s)
+  Procedure.i _write_csi(s.s)
     Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
     If *buf
       FillMemory(*buf, Len(s) + 8, #PB_ASCII)
@@ -266,7 +271,7 @@ UseModule common
   ; Apply the ESC prefix to a parameter and command string and send it to the
   ; terminal.
 
-  Procedure.i _WRITE_ESC(s.s)
+  Procedure.i _write_esc(s.s)
     Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
     If *buf
       FillMemory(*buf, Len(s) + 8, #PB_ASCII)
@@ -286,11 +291,10 @@ UseModule common
     EndIf
   EndProcedure
 
-  ; DCS and OSC are not implemented. I haven't had a need to do so yet.
-
-
-  ; * The last character of the sequence is a lowercase L (1548).; 
+  ; ----- Support code for commands as needed.
   ;
+  ; Some comands require additional work.
+
   ; This is DSR Device Status Report active position (6n).
   ;
   ; There are multiple possible DSR requests. I believe the only one I need is
@@ -302,11 +306,11 @@ UseModule common
   ;
   ; The response values are returned via an reference to a row/col structure.
 
-  Procedure.i REPORT_CURSOR_POSITION(*p.tROWCOL)
+  Procedure.i report_cursor_position(*p.tROWCOL)
     ; -1,-1 indicates a failure in the DSR
     *p\row = -1
     *p\col = -1
-    If _WRITE_CSI("6n") ; DSR for CPR cursor position report 6n -> r;cR
+    If _write_csi("6n") ; DSR for CPR cursor position report 6n -> r;cR
       Define.a char
       Define.i i
       Define.s s
@@ -346,63 +350,15 @@ UseModule common
     EndIf
   EndProcedure
 
-  ; ----- List of DEC mnemonics for VT100 command sequences ---------------------
-  ;
-  ;     CPR – Cursor Position Report – VT100 to Host
-  ;     CUB – Cursor Backward – Host to VT100 and VT100 to Host
-  ;     CUD – Cursor Down – Host to VT100 and VT100 to Host
-  ;     CUF – Cursor Forward – Host to VT100 and VT100 to Host
-  ;     CUP – Cursor Position
-  ;     CUU – Cursor Up – Host to VT100 and VT100 to Host
-  ;     DA – Device Attributes
-  ;     DECALN – Screen Alignment Display (DEC Private)
-  ;     DECANM – ANSI/VT52 Mode (DEC Private)
-  ;     DECARM – Auto Repeat Mode (DEC Private)
-  ;     DECAWM – Autowrap Mode (DEC Private)
-  ;     DECCKM – Cursor Keys Mode (DEC Private)
-  ;     DECCOLM – Column Mode (DEC Private)
-  ;     DECDHL – Double Height Line (DEC Private)
-  ;     DECDWL – Double-Width Line (DEC Private)
-  ;     DECID – Identify Terminal (DEC Private)
-  ;     DECINLM – Interlace Mode (DEC Private)
-  ;     DECKPAM – Keypad Application Mode (DEC Private)
-  ;     DECKPNM – Keypad Numeric Mode (DEC Private)
-  ;     DECLL – Load LEDS (DEC Private)
-  ;     DECOM – Origin Mode (DEC Private)
-  ;     DECRC – Restore Cursor (DEC Private)
-  ;     DECREPTPARM – Report Terminal Parameters
-  ;     DECREQTPARM – Request Terminal Parameters
-  ;     DECSC – Save Cursor (DEC Private)
-  ;     DECSCLM – Scrolling Mode (DEC Private)
-  ;     DECSCNM – Screen Mode (DEC Private)
-  ;     DECSTBM – Set Top and Bottom Margins (DEC Private)
-  ;     DECSWL – Single-width Line (DEC Private)
-  ;     DECTST – Invoke Confidence Test
-  ;     DSR – Device Status Report
-  ;     ED – Erase In Display
-  ;     EL – Erase In Line
-  ;     HTS – Horizontal Tabulation Set
-  ;     HVP – Horizontal and Vertical Position
-  ;     IND – Index
-  ;     LNM – Line Feed/New Line Mode
-  ;     NEL – Next Line
-  ;     RI – Reverse Index
-  ;     RIS – Reset To Initial State
-  ;     RM – Reset Mode
-  ;     SCS – Select Character Set
-  ;     SGR – Select Graphic Rendition
-  ;     SM – Set Mode
-  ;     TBC – Tabulation Clear
-
   ; ----- Write a string to the terminal ----------------------------------------
   ;
-  ; To avoid any Unicode/UTF-8 issues I'm build a string of ASCII bytes.
+  ; To avoid any Unicode/UTF-8 issues I build a string of ASCII bytes.
   ;
   ; Returns #true if the message was sent correctly, #false if the send failed
   ; (bytes sent = length to send), and aborts if buffer memory could not be
   ; allocated.
 
-  Procedure.i WRITE_STRING(s.s)
+  Procedure.i write_string(s.s)
     Define *buf = AllocateMemory(Len(s) + 8)
     If *buf
       FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII)
@@ -431,12 +387,12 @@ UseModule common
   ; Report_Cursor_Position might report an error, but otherwise I don't check for
   ; one here.
 
-  Procedure.i REPORT_SCREEN_DIMENSIONS(*p.tROWCOL)
-    SAVE_CURSOR
-    _WRITE_CSI("999B") ; CUD cursor down this many
-    _WRITE_CSI("999C") ; CUF cursor forward this many
-    REPORT_CURSOR_POSITION(*p)
-    RESTORE_CURSOR
+  Procedure.i report_screen_dimensions(*p.tROWCOL)
+    save_cursor
+    _write_csi("999B") ; CUD cursor down this many
+    _write_csi("999C") ; CUF cursor forward this many
+    report_cursor_position(*p)
+    restore_cursor
     ProcedureReturn #true
   EndProcedure
 
@@ -445,12 +401,12 @@ UseModule common
   ; Display the severity and text of a message at a row/col. Optionally the message
   ; could be written to a log (from common.pbi).
 
-  Procedure.i DISPLAY_MESSAGE(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
-    SAVE_CURSOR
-    CURSOR_POSITION(*pos\row, *pos\col)
-    ERASE_LINE
-    WRITE_STRING(sev + ":" + msg)
-    RESTORE_CURSOR
+  Procedure.i display_message(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
+    save_cursor
+    cursor_position(*pos\row, *pos\col)
+    erase_line
+    write_string(sev + ":" + msg)
+    restore_cursor
     ; todo: handle log
     ProcedureReturn #true
   EndProcedure
@@ -458,25 +414,25 @@ UseModule common
   ; ----- Disable raw mode/restore prior saved terminal configuration -----------
   ;
   ; If the client wants to restore the terminal to its configuration before
-  ; it was placed in raw mode, GET_TERMIOS can be used to retrieve
-  ; the current TERMIOS structure prior to SET_RAW_MODE.
+  ; it was placed in raw mode, get_termios can be used to retrieve
+  ; the current TERMIOS structure prior to set_raw_mode.
 
-  Procedure.i GET_TERMIOS(*p.tTERMIOS)
+  Procedure.i get_termios(*p.tTERMIOS)
     If -1 = fTCGETATTR(0, *p)
       abexit("Enable_Raw_Mode failed tcgetattr", Str(fERRNO()))
     EndIf
     ProcedureReturn #true
   EndProcedure
 
-  Procedure.i RESTORE_MODE(*p.tTERMIOS)
+  Procedure.i restore_mode(*p.tTERMIOS)
     If -1 = fTCSETATTR(0, #TCSAFLUSH, *p)
       abexit("Disable_Raw_Mode failed tcsetattr", Str(fERRNO()))
     Endif
     ProcedureReturn #true
   EndProcedure
 
-  Procedure.i SET_RAW_MODE(*raw.tTERMIOS)
-    GET_TERMIOS(*raw)
+  Procedure.i set_raw_mode(*raw.tTERMIOS)
+    get_termios(*raw)
     With *raw
       \c_iflag = \c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
       \c_oflag = \c_oflag & ~(#OPOST)

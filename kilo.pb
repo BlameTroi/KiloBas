@@ -106,8 +106,10 @@ XIncludeFile "syslib/common.pbi" ; common macros, constants, and procedures
 ; for both scoping and readability.
 XIncludeFile "syslib/vt100.pbi"  ; VT100/ANSI terminal control API
 
-UseModule common
+UseModule errno
+UseModule termios
 UseModule unistd
+UseModule common
 
 ; ----- Common or global data -------------------------------------------------
 ;
@@ -119,8 +121,8 @@ Global.tROWCOL   screen_size        ; dimensions of physical screen
 Global.tROWCOL   message_area       ; start of message output area
 Global.tROWCOL   top_left           ; bounds of the editable region
 Global.tROWCOL   bottom_right       ; NW corner, SE corner
-Global.termios::tTERMIOS original_termios   ; saved to restore at exit
-Global.termios::tTERMIOS raw_termios        ; not really used after set, kept for reference
+Global.tTERMIOS original_termios   ; saved to restore at exit
+Global.tTERMIOS raw_termios        ; not really used after set, kept for reference
 
 
 ; ----- Common error exit -----------------------------------------------------
@@ -134,13 +136,13 @@ Global.termios::tTERMIOS raw_termios        ; not really used after set, kept fo
 
 Procedure abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
   If erase
-    vt100::ERASE_SCREEN
-    vt100::CURSOR_HOME
-    vt100::RESTORE_MODE(@original_termios)
+    vt100::erase_screen
+    vt100::cursor_home
+    vt100::restore_mode(@original_termios)
   ElseIf reset
     vt100::HARD_RESET
   EndIf
-  vt100::CURSOR_SHOW
+  vt100::cursor_show
   abexit(s, extra, rc)
 EndProcedure
 
@@ -182,30 +184,30 @@ Procedure.i move_cursor(c.a)
 EndProcedure
 
 Procedure.i cursor_home()
-  vt100::CURSOR_POSITION(3, 1)
+  vt100::cursor_position(3, 1)
 EndProcedure
 
 Procedure.i draw_rows()
-  vt100::SAVE_CURSOR
+  vt100::save_cursor
   Define.i row
   For row = 3 To screen_size\row - 3
     vt100::ERASE_LINE
-    vt100::WRITE_STRING(~"~")
-    vt100::WRITE_STRING(~"\r\n")
+    vt100::write_string(~"~")
+    vt100::write_string(~"\r\n")
   Next row
-  vt100::RESTORE_CURSOR
+  vt100::restore_cursor
 EndProcedure
 
 Procedure.i refresh_screen()
-  vt100::CURSOR_HIDE
-  ;vt100::ERASE_SCREEN
-  ;vt100::CURSOR_HOME
+  vt100::cursor_hide
+  ;vt100::erase_screen
+  ;vt100::cursor_home
   cursor_home()
   draw_rows()
-  vt100::CURSOR_POSITION(cursor_position\row, cursor_position\col)
-  ;vt100::CURSOR_HOME
+  vt100::cursor_position(cursor_position\row, cursor_position\col)
+  ;vt100::cursor_home
   ;cursor_home()
-  vt100::CURSOR_SHOW
+  vt100::cursor_show
 EndProcedure
 
 ; ----- Read a key press and return it one byte at a time ---------------------
@@ -218,10 +220,10 @@ Procedure.a read_key()
   Define n.i
   Define c.a
   Repeat
-    n = vt100::READ_KEY(c)
+    n = vt100::read_key(c)
     If n = -1
-      Define e.i = errno::fERRNO()
-      If e <> errno::#EAGAIN
+      Define e.i = fERRNO()
+      If e <> #EAGAIN
         Abort("Editor_Read_Key", Str(e))
       Else
         n = 0
@@ -244,20 +246,20 @@ Procedure.i process_key()
   Select c
     Case #CTRL_D ; display screen size.
       Define.tROWCOL p
-      vt100::REPORT_SCREEN_DIMENSIONS(@p)
-      vt100::DISPLAY_MESSAGE("I", "Screen size: " + Str(p\row) + " x " + Str(p\col), @message_area)
+      vt100::report_screen_dimensions(@p)
+      vt100::display_message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col), @message_area)
     Case #CTRL_P ; display current cursor position
       Define.tROWCOL p
-      vt100::REPORT_CURSOR_POSITION(@p)
-      vt100::DISPLAY_MESSAGE("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col), @message_area)
+      vt100::report_cursor_position(@p)
+      vt100::display_message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col), @message_area)
     Case #CTRL_Q ; quit program
-      vt100::CURSOR_POSITION(10, 1)
+      vt100::cursor_position(10, 1)
       ProcedureReturn #true
     Case #CTRL_A ; force an run through the abort path
-      vt100::SAVE_CURSOR
-      vt100::CURSOR_POSITION(5, 8)
-      vt100::WRITE_STRING("Game Over Man!!!")
-      vt100::RESTORE_CURSOR
+      vt100::save_cursor
+      vt100::cursor_position(5, 8)
+      vt100::write_string("Game Over Man!!!")
+      vt100::restore_cursor
       Delay(2500)
       abort("You forced an abort", "", #false, #true, -1)
     Case 'w', 'W', 'a', 'A', 's', 'S', 'd', 'D' ; nesw
@@ -274,24 +276,24 @@ EndProcedure
 
 Procedure Mainline()
   ; Set up the terminal and identify screen areas.
-  vt100::GET_TERMIOS(@original_termios)
-  vt100::SET_RAW_MODE(@raw_termios)
-  vt100::REPORT_SCREEN_DIMENSIONS(@screen_size)
+  vt100::get_termios(@original_termios)
+  vt100::set_raw_mode(@raw_termios)
+  vt100::report_screen_dimensions(@screen_size)
   message_area = screen_size
   message_area\col = 1
   message_area\row = message_area\row - 1
   ; Greet the user.
-  vt100::ERASE_SCREEN
+  vt100::erase_screen
   cursor_home()
-  vt100::REPORT_CURSOR_POSITION(@cursor_position)
-  vt100::DISPLAY_MESSAGE("I", "Welcome to kilo in PureBasic!", @message_area)
+  vt100::report_cursor_position(@cursor_position)
+  vt100::display_message("I", "Welcome to kilo in PureBasic!", @message_area)
   ; The top level mainline is really small.
   Repeat
     refresh_screen()
   Until process_key()
   ; Restore the terminal to its original settings.
   ; TODO: Can I save and restore the complete screen state?
-  vt100::RESTORE_MODE(@original_termios)
+  vt100::restore_mode(@original_termios)
 EndProcedure
 
 Mainline()
