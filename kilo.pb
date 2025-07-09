@@ -120,7 +120,12 @@ Enumeration kilo_keys 1000
   #ARROW_DOWN
   #ARROW_RIGHT
   #ARROW_LEFT
+  #PAGE_UP
+  #PAGE_DOWN
 EndEnumeration
+; The read_key routine can return an error code if needed, but for now that is
+; just treated as if the user pressed ESC.
+#BAD_SEQUENCE_READ = #ESCAPE
 
 ; ----- Common error exit -----------------------------------------------------
 ;
@@ -199,63 +204,100 @@ EndProcedure
 ; and handle as if we got an error return flagged #EAGAIN. Proper handling
 ; of things such as PF keys is still to do.
 
+Global Dim keypress_buffer.a(32)
+
 Procedure.i read_key()
-  Define.i n
-  Define.a c
-  Define.a c2, c3
-  ; Wait until we get a key.
+  Define.i n, e
+  For n = 0 To 31
+    keypress_buffer(n) = 0
+  Next n
+  ; Spin until we get some sort of key. It might be a plain textual key or
+  ; the start of an ANSI sequence.
   Repeat
-    n = vt100::read_key(c)
+    n = vt100::read_key(keypress_buffer(0))
     If n = -1
-      Define.i e = fERRNO()
+      e = fERRNO()
       If e <> #EAGAIN
-        Abort("Editor_Read_Key", Str(e))
+        Abort("Editor_Read_key", Str(e))
       Else
         n = 0
-      Endif
-    Endif
-  Until n <> 0
-  ; If it isn't the start of a sequence, return it.
-  If c <> $1b
-    ProcedureReturn c
+      EndIf
+    EndIf
+  Until n<>0
+  ; If the key is not ESC, it can be returned straight away.
+  If keypress_buffer(0) <> #ESCAPE
+    ProcedureReturn keypress_buffer(0)
   EndIf
-  ; It's part of a sequenced response, ESC [ something, and so on. Try to
-  ; complete the sequence, if the read times out or gets an error, return ESC.
-  ; If the user has only pressed ESC themselves then the first read of the
-  ; sequence will time out. A timeout in the second read of the sequence is
-  ; likely an error but ESC is returned further checks.
-  n = vt100::read_key(c2)
-  if n <> 1
-    ProcedureReturn $1b
-  EndIf
-  n = vt100::read_Key(c3)
-  If n <> 1
-    ProcedureReturn $1b
-  EndIf
-  ; If this isn't a well formed sequence, treat it as ESC.
-  If c2 <> '['
-    ProcedureReturn $1b
-  EndIf
-  ; Translate the sequence from ANSI mode to an internally meaningful value for
-  ; process_keypress. For example, ESC [ A->D are the up, down, right, and left
-  ; arrow keys.
+  ; Collect the rest of the sequence. If the next read times out then the user
+  ; actually pressed ESC. No error checking is done. If one occurs it will be
+  ; processed as a time out. So, any error or timeout on the next two
+  ; characters read will return a lone ESC to the caller.
   ;
-  ; We need a wider field than the ASCII c so reusing N at this point.
-  n = 0
-  Select c3
+  ; We need to read at least three bytes to identify a sequence, and more may
+  ; be needed. Read the next two bytes and if there is an error/time out, just
+  ; return an ESC.
+  n = vt100::read_key(keypress_buffer(1))
+  If n <> 1
+    ProcedureReturn #ESCAPE
+  EndIf
+  n = vt100::read_key(keypress_buffer(2))
+  If n <> 1
+    ProcedureReturn #BAD_SEQUENCE_READ
+  EndIf
+  ; Is this an ESC [ sequence? If not, just return an ESC.
+  If keypress_buffer(1) <> '['
+    ProcedureReturn #BAD_SEQUENCE_READ
+  EndIf
+  ; Numerics are followed by a tilde (~) requiring a fourth byte to complete
+  ; the sequence.
+  If keypress_buffer(2) >= '0' and keypress_buffer(2) <= '9'
+    n = vt100::read_key(keypress_buffer(3))
+    If n <> 1 Or keypress_buffer(3) <> '~'
+      ProcedureReturn #BAD_SEQUENCE_READ
+    EndIf
+    Select keypress_buffer(2)
+      Case '5'
+        ProcedureReturn #PAGE_UP
+      Case '6'
+        ProcedureReturn #PAGE_DOWN
+      Default
+        ProcedureReturn #BAD_SEQUENCE_READ
+    EndSelect
+  EndIf
+  Select keypress_buffer(2)
     Case 'A'
-      n = #ARROW_UP
+      ProcedureReturn #ARROW_UP
     Case 'B'
-      n = #ARROW_DOWN
+      ProcedureReturn #ARROW_DOWN
     Case 'C'
-      n = #ARROW_RIGHT
+      ProcedureReturn #ARROW_RIGHT
     Case 'D'
-      n = #ARROW_LEFT
+      ProcedureReturn #ARROW_LEFT
     Default
-      ; If the sequence is not understood, just return ESC.
-      n = $1b
+      ProcedureReturn #BAD_SEQUENCE_READ
   EndSelect
-  ProcedureReturn n
+EndProcedure
+
+Procedure display_keypress_buffer()
+  vt100::save_cursor
+  Define.s s = "key: "
+  Define.i i
+  While keypress_buffer(i)
+    If keypress_buffer(i) = #ESCAPE
+      s = s + "ESC "
+    ElseIf keypress_buffer(i) = ' '
+      s = s + "SPC "
+    ElseIf keypress_buffer(i) < ' '
+      s = s + "^" + Chr('A' + keypress_buffer(i) - 1) + " "
+    Else
+      s = s + Chr(keypress_buffer(i)) + " "
+    EndIf
+    i = i + 1
+  Wend
+  Define.tROWCOL p
+  vt100::cursor_position(top_left\row - 1, top_left\col + 20)
+  vt100::write_string(s + "              ")
+  vt100::restore_cursor
 EndProcedure
 
 ; ----- Handle key press ------------------------------------------------------
@@ -269,9 +311,9 @@ EndProcedure
 ;
 ; This procedure returns #true when the user requests that the session end.
 
-
 Procedure.i process_key()
   Define.i c = read_key()
+  display_keypress_buffer()
   Select c
     Case #CTRL_D ; display screen size.
       Define.tROWCOL p
@@ -292,7 +334,18 @@ Procedure.i process_key()
       Delay(2500)
       abort("You forced an abort", "", #false, #true, -1)
     Case #ARROW_UP, #ARROW_RIGHT, #ARROW_DOWN, #ARROW_LEFT
+      display_keypress_buffer()
       move_cursor(c)
+    Case #PAGE_UP
+      Define.i i
+      For i = top_left\row To bottom_right\row
+        move_cursor(#ARROW_UP)
+      Next i
+    Case #PAGE_DOWN
+      Define.i i
+      For i = top_left\row To bottom_right\row
+        move_cursor(#ARROW_DOWN)
+      Next i
     Default
       ; To be provided
   EndSelect
