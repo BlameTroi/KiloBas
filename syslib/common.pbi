@@ -21,12 +21,6 @@ EnableExplicit
 ;
 ; There are no thread safety checks.
 
-; ----- Include system library interfaces -------------------------------------
-
-; XIncludeFile "errno.pbi"
-; XIncludeFile "unistd.pbi"
-; XIncludeFile "stdio.h"
-; XIncludeFile "stdlib.h"
 
 DeclareModule COMMON
 
@@ -118,6 +112,7 @@ DeclareModule COMMON
 EndDeclareModule
 
 Module COMMON
+
   ; ----- Abnormal program termination ------------------------------------------
   ;
   ; This really should write to stderr. And also the log if one is opened.

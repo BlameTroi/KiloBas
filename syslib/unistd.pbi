@@ -93,8 +93,8 @@ DeclareModule unistd
   Prototype.i _pREAD(filedes.i, *c.tTCBUFFER, len.i)
   Prototype.i _pWRITE(filedes.i, *c.tTCBUFFER, len.i)
 
-  Define fREAD._pREAD
-  Define fWRITE._pWRITE
+  Global fREAD._pREAD
+  Global fWRITE._pWRITE
   Declare.i fWRITES(filedes.i, s.s)
 
 EndDeclareModule

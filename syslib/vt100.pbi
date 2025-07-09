@@ -45,7 +45,9 @@ XincludeFile "termios.pbi"      ; terminal control
 XIncludeFile "common.pbi"       ; my tool box
 
 DeclareModule VT100
-
+UseModule common
+UseModule termios
+UseModule unistd
   ; ----- API Macros and procedures to issue VT100 commands ---------------------
   ;
   ; While I don't have everything documented yet, I have added descriptions of
@@ -64,7 +66,7 @@ DeclareModule VT100
   ; Wrap read() for terminal I/O.
 
   Macro READ_KEY(c)
-    unistd::fREAD(0, @c, 1)
+    fREAD(0, @c, 1)
   EndMacro
 
   ; This is an ED Erase in Display (J). It takes the following parameters:
@@ -167,13 +169,13 @@ DeclareModule VT100
 
 
   ; ----- Forward declarations --------------------------------------------------
-  Declare.i REPORT_CURSOR_POSITION(*p.COMMON::tROWCOL)
+  Declare.i REPORT_CURSOR_POSITION(*p.tROWCOL)
   Declare.i WRITE_STRING(s.s)
-  Declare.i REPORT_SCREEN_DIMENSIONS(*p.COMMON::tROWCOL)
-  Declare.i DISPLAY_MESSAGE(sev.s, msg.s, *pos.COMMON::tROWCOL, log.i=#false)
-  Declare.i GET_TERMIOS(*p.termios::tTERMIOS)
-  Declare.i RESTORE_MODE(*p.termios::tTERMIOS)
-  Declare.i SET_RAW_MODE(*raw.termios::tTERMIOS)
+  Declare.i REPORT_SCREEN_DIMENSIONS(*p.tROWCOL)
+  Declare.i DISPLAY_MESSAGE(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
+  Declare.i GET_TERMIOS(*p.tTERMIOS)
+  Declare.i RESTORE_MODE(*p.tTERMIOS)
+  Declare.i SET_RAW_MODE(*raw.tTERMIOS)
   Declare.i _WRITE_CSI(s.s)
   Declare.i _WRITE_ESC(s.s)
 
@@ -181,6 +183,9 @@ EndDeclareModule
 
 Module VT100
 
+UseModule common
+UseModule termios
+UseModule unistd
   ; ----- Globals ---------------------------------------------------------------
   ;
   ; I'm trying to keep this to a minimum and will probably convert this
@@ -233,8 +238,8 @@ Module VT100
       FillMemory(*buf, Len(s) + 8, #PB_ASCII)
       PokeA(*buf, $1b)
       PokeA(*buf + 1, '[')
-      COMMON::string_to_buffer(s, *buf + 2)
-      Define.i sent = unistd::fWRITE(1, *buf, Len(s) + 2)
+      string_to_buffer(s, *buf + 2)
+      Define.i sent = fWRITE(1, *buf, Len(s) + 2)
       FreeMemory(*buf)
       If sent = Len(s) + 2
         ProcedureReturn #true
@@ -244,7 +249,7 @@ Module VT100
       EndIf
     Else
       ; A fatal error.
-      COMMON::abexit("Write_CSI_Command AllocateMemory failed", Str(errno::fERRNO()))
+      abexit("Write_CSI_Command AllocateMemory failed", Str(errno::fERRNO()))
       ProcedureReturn #false ; never executed
     EndIf
   EndProcedure
@@ -257,8 +262,8 @@ Module VT100
     If *buf
       FillMemory(*buf, Len(s) + 8, #PB_ASCII)
       PokeA(*buf, $1b)
-      COMMON::string_to_buffer(s, *buf + 1)
-      Define.i sent = unistd::fWRITE(1, *buf, Len(s) + 1)
+      string_to_buffer(s, *buf + 1)
+      Define.i sent = fWRITE(1, *buf, Len(s) + 1)
       If sent = Len(s) + 1
         ProcedureReturn #true
       Else
@@ -267,7 +272,7 @@ Module VT100
       EndIf
     Else
       ; A fatal error.
-      COMMON::abexit("Write_ESC_Command AllocateMemory failed", Str(errno::fERRNO()))
+      abexit("Write_ESC_Command AllocateMemory failed", Str(errno::fERRNO()))
       ProcedureReturn #false ; never executed
     EndIf
   EndProcedure
@@ -288,7 +293,7 @@ Module VT100
   ;
   ; The response values are returned via an reference to a row/col structure.
 
-  Procedure.i REPORT_CURSOR_POSITION(*p.COMMON::tROWCOL)
+  Procedure.i REPORT_CURSOR_POSITION(*p.tROWCOL)
     ; -1,-1 indicates a failure in the DSR
     *p\row = -1
     *p\col = -1
@@ -298,7 +303,7 @@ Module VT100
       Define.s s
       ; Read a character at a time until we do not get a character (a time out
       ; on the wait) or the character received is the end marker for the CPR.
-      While unistd::fREAD(0, @char, 1)
+      While fREAD(0, @char, 1)
         s = s + Chr(char)
         If char = 'R'
           Break
@@ -310,14 +315,14 @@ Module VT100
         ; Collect row (digits up to the ;).
         *p\row = 0
         i = 3
-        While COMMON::c_is_num(Mid(s, i, 1))
+        While c_is_num(Mid(s, i, 1))
           *p\row = *p\row * 10 + Val(Mid(s, i, 1))
           i = i + 1
         Wend
         ; Skip past the assumed ; and collect the column (digits up to the R).
         *p\col = 0
         i = i + 1
-        While COMMON::c_is_num(Mid(s, i, 1))
+        While c_is_num(Mid(s, i, 1))
           *p\col = *p\col * 10 + Val(Mid(s, i, 1))
           i = i + 1
         Wend
@@ -392,8 +397,8 @@ Module VT100
     Define *buf = AllocateMemory(Len(s) + 8)
     If *buf
       FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII)
-      COMMON::string_to_buffer(s, *buf)
-      Define.i sent = unistd::fWRITE(1, *buf, Len(s))
+      string_to_buffer(s, *buf)
+      Define.i sent = fWRITE(1, *buf, Len(s))
       Define.i err = errno::fERRNO()
       FreeMemory(*buf)
       If sent = Len(s)
@@ -403,7 +408,7 @@ Module VT100
       ProcedureReturn #false
     Else
       ; A fatal error.
-      COMMON::abexit("Write_String AllocateMemory failed", Str(errno::fERRNO()))
+      abexit("Write_String AllocateMemory failed", Str(errno::fERRNO()))
       ProcedureReturn #false ; never executed
     EndIf
   EndProcedure
@@ -417,7 +422,7 @@ Module VT100
   ; Report_Cursor_Position might report an error, but otherwise I don't check for
   ; one here.
 
-  Procedure.i REPORT_SCREEN_DIMENSIONS(*p.COMMON::tROWCOL)
+  Procedure.i REPORT_SCREEN_DIMENSIONS(*p.tROWCOL)
     SAVE_CURSOR
     _WRITE_CSI("999B") ; CUD cursor down this many
     _WRITE_CSI("999C") ; CUF cursor forward this many
@@ -431,7 +436,7 @@ Module VT100
   ; Display the severity and text of a message at a row/col. Optionally the message
   ; could be written to a log (from common.pbi).
 
-  Procedure.i DISPLAY_MESSAGE(sev.s, msg.s, *pos.COMMON::tROWCOL, log.i=#false)
+  Procedure.i DISPLAY_MESSAGE(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
     SAVE_CURSOR
     CURSOR_POSITION(*pos\row, *pos\col)
     ERASE_LINE
@@ -447,32 +452,32 @@ Module VT100
   ; it was placed in raw mode, GET_TERMIOS can be used to retrieve
   ; the current TERMIOS structure prior to SET_RAW_MODE.
 
-  Procedure.i GET_TERMIOS(*p.termios::tTERMIOS)
-    If -1 = termios::fTCGETATTR(0, *p)
-      COMMON::abexit("Enable_Raw_Mode failed tcgetattr", Str(errno::fERRNO()))
+  Procedure.i GET_TERMIOS(*p.tTERMIOS)
+    If -1 = fTCGETATTR(0, *p)
+      abexit("Enable_Raw_Mode failed tcgetattr", Str(errno::fERRNO()))
     EndIf
     ProcedureReturn #true
   EndProcedure
 
-  Procedure.i RESTORE_MODE(*p.termios::tTERMIOS)
-    If -1 = termios::fTCSETATTR(0, termios::#TCSAFLUSH, *p)
-      COMMON::abexit("Disable_Raw_Mode failed tcsetattr", Str(errno::fERRNO()))
+  Procedure.i RESTORE_MODE(*p.tTERMIOS)
+    If -1 = fTCSETATTR(0, #TCSAFLUSH, *p)
+      abexit("Disable_Raw_Mode failed tcsetattr", Str(errno::fERRNO()))
     Endif
     ProcedureReturn #true
   EndProcedure
 
-  Procedure.i SET_RAW_MODE(*raw.termios::tTERMIOS)
+  Procedure.i SET_RAW_MODE(*raw.tTERMIOS)
     GET_TERMIOS(*raw)
     With *raw
-      \c_iflag = \c_iflag & ~(termios::#BRKINT | termios::#ICRNL | termios::#INPCK | termios::#ISTRIP | termios::#IXON)
-      \c_oflag = \c_oflag & ~(termios::#OPOST)
-      \c_cflag = \c_cflag | (termios::#CS8)
-      \c_lflag = \c_lflag & ~(termios::#ECHO | termios::#ICANON | termios::#IEXTEN | termios::#ISIG)
-      \c_cc[termios::#VMIN] = 0       ; min number of bytes to return from read
-      \c_cc[termios::#VTIME] = 1      ; timeout in read (1/10 second)
+      \c_iflag = \c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
+      \c_oflag = \c_oflag & ~(#OPOST)
+      \c_cflag = \c_cflag | (#CS8)
+      \c_lflag = \c_lflag & ~(#ECHO | #ICANON | #IEXTEN | #ISIG)
+      \c_cc[#VMIN] = 0       ; min number of bytes to return from read
+      \c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
     EndWith
-    If -1 = termios::fTCSETATTR(0, termios::#TCSAFLUSH, *raw)
-      COMMON::abexit("Enable_Raw_Mode failed tcsetattr", Str(errno::fERRNO()))
+    If -1 = fTCSETATTR(0, #TCSAFLUSH, *raw)
+      abexit("Enable_Raw_Mode failed tcsetattr", Str(errno::fERRNO()))
     EndIf
     ProcedureReturn #true
   EndProcedure

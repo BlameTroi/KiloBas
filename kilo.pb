@@ -91,36 +91,37 @@ EnableExplicit
 ;
 ; These are the parts of the C system includes <.h> that I use.
 
+; These are modules and each should have a UseModule.
 ; XIncludeFile "syslib/ctype.pbi" ; not yet implemented
-XIncludeFile "syslib/errno.pbi"
-XIncludeFile "syslib/termios.pbi"
-; XIncludeFile "syslib/stdio.h" ; not yet implemented
-; XIncludeFile "syslib/stdlib.h" ; not yet implemented
-XIncludeFile "syslib/unistd.pbi" ; The parts of 
+XIncludeFile "syslib/errno.pbi"   ; the errors and how to decode them
+XIncludeFile "syslib/termios.pbi" ; the termios structure, defines
+; XIncludeFile "syslib/stdio.h"    ; not yet implemented
+; XIncludeFile "syslib/stdlib.h"   ; not yet implemented
+XIncludeFile "syslib/unistd.pbi" ; The parts I need.
 
-; My utility libraries:
-
+; And this needs a UseModule as well.
 XIncludeFile "syslib/common.pbi" ; common macros, constants, and procedures
 
+; More APIish modules do not have UseModule, leaving the module name
+; for both scoping and readability.
 XIncludeFile "syslib/vt100.pbi"  ; VT100/ANSI terminal control API
 
-; ----- Forward declarations --------------------------------------------------
-;
-;
-; None at present.
+UseModule common
+UseModule unistd
 
 ; ----- Common or global data -------------------------------------------------
 ;
 ; This could be collected into a `context` structure that is dynamically
 ; allocated, but at this stage of development global variables suffice.
 
-Global.common::tROWCOL   cursor_position    ; current position
-Global.common::tROWCOL   screen_size        ; dimensions of physical screen
-Global.common::tROWCOL   message_area       ; start of message output area
-Global.common::tROWCOL   top_left           ; bounds of the editable region
-Global.common::tROWCOL   bottom_right       ; NW corner, SE corner
+Global.tROWCOL   cursor_position    ; current position
+Global.tROWCOL   screen_size        ; dimensions of physical screen
+Global.tROWCOL   message_area       ; start of message output area
+Global.tROWCOL   top_left           ; bounds of the editable region
+Global.tROWCOL   bottom_right       ; NW corner, SE corner
 Global.termios::tTERMIOS original_termios   ; saved to restore at exit
 Global.termios::tTERMIOS raw_termios        ; not really used after set, kept for reference
+
 
 ; ----- Common error exit -----------------------------------------------------
 ;
@@ -140,7 +141,7 @@ Procedure abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
     vt100::HARD_RESET
   EndIf
   vt100::CURSOR_SHOW
-  common::abexit(s, extra, rc)
+  abexit(s, extra, rc)
 EndProcedure
 
 ; ----- Controlling the presentation ------------------------------------------
@@ -237,20 +238,16 @@ EndProcedure
 ;
 ; This procedure returns #true when the user requests that the session end.
 
-#CTRL_A = common::#CTRL_A
-#CTRL_D = common::#CTRL_D
-#CTRL_P = common::#CTRL_P
-#CTRL_Q = common::#CTRL_Q
 
 Procedure.i process_key()
   Define c.a = read_key()
   Select c
     Case #CTRL_D ; display screen size.
-      Define.common::tROWCOL p
+      Define.tROWCOL p
       vt100::REPORT_SCREEN_DIMENSIONS(@p)
       vt100::DISPLAY_MESSAGE("I", "Screen size: " + Str(p\row) + " x " + Str(p\col), @message_area)
     Case #CTRL_P ; display current cursor position
-      Define.common::tROWCOL p
+      Define.tROWCOL p
       vt100::REPORT_CURSOR_POSITION(@p)
       vt100::DISPLAY_MESSAGE("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col), @message_area)
     Case #CTRL_Q ; quit program
