@@ -111,6 +111,16 @@ Global.tROWCOL   bottom_right       ; NW corner, SE corner
 Global.tTERMIOS original_termios   ; saved to restore at exit
 Global.tTERMIOS raw_termios        ; not really used after set, kept for reference
 
+; ----- Common error exit -----------------------------------------------------
+;
+; ANSI key sequences are mapped into meaningful integer values.
+
+Enumeration kilo_keys 1000
+  #ARROW_UP
+  #ARROW_DOWN
+  #ARROW_RIGHT
+  #ARROW_LEFT
+EndEnumeration
 
 ; ----- Common error exit -----------------------------------------------------
 ;
@@ -140,16 +150,16 @@ EndProcedure
 ;
 ; I might try to switch to a format more like that of XEdit in CMS.
 
-Procedure.i move_cursor(c.a)
+Procedure.i move_cursor(c.i)
   With cursor_position
     Select c
-      Case 'w', 'W'               ; N
+      Case #ARROW_UP               ; N
         \row = \row - 1
-      Case 'd', 'D'               ; E
+      Case #ARROW_RIGHT            ; E
         \col = \col + 1
-      Case 's', 'S'               ; S
+      Case #ARROW_DOWN             ; S
         \row = \row + 1
-      Case 'a', 'A'               ; W
+      Case #ARROW_LEFT             ; W
         \col = \col - 1
     EndSelect
     ; Keep the cursor in bounds.
@@ -189,9 +199,11 @@ EndProcedure
 ; and handle as if we got an error return flagged #EAGAIN. Proper handling
 ; of things such as PF keys is still to do.
 
-Procedure.a read_key()
+Procedure.i read_key()
   Define.i n
   Define.a c
+  Define.a c2, c3
+  ; Wait until we get a key.
   Repeat
     n = vt100::read_key(c)
     If n = -1
@@ -203,7 +215,47 @@ Procedure.a read_key()
       Endif
     Endif
   Until n <> 0
-  ProcedureReturn c
+  ; If it isn't the start of a sequence, return it.
+  If c <> $1b
+    ProcedureReturn c
+  EndIf
+  ; It's part of a sequenced response, ESC [ something, and so on. Try to
+  ; complete the sequence, if the read times out or gets an error, return ESC.
+  ; If the user has only pressed ESC themselves then the first read of the
+  ; sequence will time out. A timeout in the second read of the sequence is
+  ; likely an error but ESC is returned further checks.
+  n = vt100::read_key(c2)
+  if n <> 1
+    ProcedureReturn $1b
+  EndIf
+  n = vt100::read_Key(c3)
+  If n <> 1
+    ProcedureReturn $1b
+  EndIf
+  ; If this isn't a well formed sequence, treat it as ESC.
+  If c2 <> '['
+    ProcedureReturn $1b
+  EndIf
+  ; Translate the sequence from ANSI mode to an internally meaningful value for
+  ; process_keypress. For example, ESC [ A->D are the up, down, right, and left
+  ; arrow keys.
+  ;
+  ; We need a wider field than the ASCII c so reusing N at this point.
+  n = 0
+  Select c3
+    Case 'A'
+      n = #ARROW_UP
+    Case 'B'
+      n = #ARROW_DOWN
+    Case 'C'
+      n = #ARROW_RIGHT
+    Case 'D'
+      n = #ARROW_LEFT
+    Default
+      ; If the sequence is not understood, just return ESC.
+      n = $1b
+  EndSelect
+  ProcedureReturn n
 EndProcedure
 
 ; ----- Handle key press ------------------------------------------------------
@@ -211,11 +263,15 @@ EndProcedure
 ; Route control based on mode and key. Try to keep any one Case clause
 ; short--use Procedures when appropriate.
 ;
+; A "key" returned from read_key might represent a multi-byte ANSI sequence. If
+; so, it is mapped to some value from the kilo_keys enumeration. That
+; enumeration starts from 1000.
+;
 ; This procedure returns #true when the user requests that the session end.
 
 
 Procedure.i process_key()
-  Define.a c = read_key()
+  Define.i c = read_key()
   Select c
     Case #CTRL_D ; display screen size.
       Define.tROWCOL p
@@ -235,7 +291,7 @@ Procedure.i process_key()
       vt100::restore_cursor
       Delay(2500)
       abort("You forced an abort", "", #false, #true, -1)
-    Case 'w', 'W', 'a', 'A', 's', 'S', 'd', 'D' ; nesw
+    Case #ARROW_UP, #ARROW_RIGHT, #ARROW_DOWN, #ARROW_LEFT
       move_cursor(c)
     Default
       ; To be provided

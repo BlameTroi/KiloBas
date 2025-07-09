@@ -31,7 +31,19 @@ else
 	exit
 fi
 
-pbopts="-c -l -cl -o"
+# -c commented c output
+# -l enable line numbering for on error
+# -cl generate a console based exe
+# -o output file
+# -d enable debugger
+# -ds create debugger symbols
+# -z optimizer
+# -p purifier
+# -t enable threadsafe support
+# -dl macOS create dylib file (replaces -o)
+# -n icon to put in bundle
+
+pbopts="-cl -o"
 
 echo pbcompiler $pbopts $opf $ipf
 pbcompiler ${=pbopts} $opf $ipf
