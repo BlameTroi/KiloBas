@@ -120,8 +120,11 @@ Enumeration kilo_keys 1000
   #ARROW_DOWN
   #ARROW_RIGHT
   #ARROW_LEFT
+  #DEL_KEY
   #PAGE_UP
   #PAGE_DOWN
+  #HOME_KEY
+  #END_KEY
 EndEnumeration
 ; The read_key routine can return an error code if needed, but for now that is
 ; just treated as if the user pressed ESC.
@@ -226,6 +229,10 @@ Procedure.i read_key()
   Until n<>0
   ; If the key is not ESC, it can be returned straight away.
   If keypress_buffer(0) <> #ESCAPE
+    ; There's the Delete key and FN Delete. FN Delete comes through as ESC 3 ~.
+    If keypress_buffer(0) = #DELETE
+      ProcedureReturn #DEL_KEY
+    EndIf
     ProcedureReturn keypress_buffer(0)
   EndIf
   ; Collect the rest of the sequence. If the next read times out then the user
@@ -244,39 +251,74 @@ Procedure.i read_key()
   If n <> 1
     ProcedureReturn #BAD_SEQUENCE_READ
   EndIf
-  ; Is this an ESC [ sequence? If not, just return an ESC.
-  If keypress_buffer(1) <> '['
-    ProcedureReturn #BAD_SEQUENCE_READ
-  EndIf
-  ; Numerics are followed by a tilde (~) requiring a fourth byte to complete
-  ; the sequence.
-  If keypress_buffer(2) >= '0' and keypress_buffer(2) <= '9'
-    n = vt100::read_key(keypress_buffer(3))
-    If n <> 1 Or keypress_buffer(3) <> '~'
-      ProcedureReturn #BAD_SEQUENCE_READ
+  ; If first byte is ESC, further filter on second byte. So far sequences
+  ; prefixed by ESC [ and ESC O are supported.
+  If keypress_buffer(1) = '['
+    ; Numererics are followed by a tilde (~) requiring a fourth byte to complete
+    ; the sequence.
+    If keypress_buffer(2) >= '0' and keypress_buffer(2) <= '9'
+      n = vt100::read_key(keypress_buffer(3))
+      If n <> 1 Or keypress_buffer(3) <> '~'
+        ProcedureReturn #BAD_SEQUENCE_READ
+      EndIf
+      Select keypress_buffer(2)
+        Case '1', '7'
+          ProcedureReturn #HOME_KEY
+        Case '3'
+          ProcedureReturn #DEL_KEY
+        Case '4', '8'
+          ProcedureReturn #END_KEY
+        Case '5'
+          ProcedureReturn #PAGE_UP
+        Case '6'
+          ProcedureReturn #PAGE_DOWN
+        Default
+          ProcedureReturn #BAD_SEQUENCE_READ
+      EndSelect
+    Else
+      Select keypress_buffer(2)
+        Case 'A'
+          ProcedureReturn #ARROW_UP
+        Case 'B'
+          ProcedureReturn #ARROW_DOWN
+        Case 'C'
+          ProcedureReturn #ARROW_RIGHT
+        Case 'D'
+          ProcedureReturn #ARROW_LEFT
+        Case 'H'
+          ProcedureReturn #HOME_KEY
+        Case 'F'
+          ProcedureReturn #END_KEY
+        Default
+          ProcedureReturn #BAD_SEQUENCE_READ
+      EndSelect
     EndIf
+    ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
+  ElseIf keypress_buffer(1) = 'O' ; upper case 'o'
     Select keypress_buffer(2)
-      Case '5'
-        ProcedureReturn #PAGE_UP
-      Case '6'
-        ProcedureReturn #PAGE_DOWN
+      Case 'H'
+        ProcedureReturn #HOME_KEY
+      Case 'F'
+        ProcedureReturn #END_KEY
       Default
         ProcedureReturn #BAD_SEQUENCE_READ
     EndSelect
+    ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
+  Else
+    ProcedureReturn #BAD_SEQUENCE_READ ; but we can get here
   EndIf
-  Select keypress_buffer(2)
-    Case 'A'
-      ProcedureReturn #ARROW_UP
-    Case 'B'
-      ProcedureReturn #ARROW_DOWN
-    Case 'C'
-      ProcedureReturn #ARROW_RIGHT
-    Case 'D'
-      ProcedureReturn #ARROW_LEFT
-    Default
-      ProcedureReturn #BAD_SEQUENCE_READ
-  EndSelect
+  ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
 EndProcedure
+
+; ----- Display the keypress buffer as built in read_key ----------------------
+;
+; The keypress_buffer is a 32 byte nil terminated ASCII byte array. `read_key`
+; stores the current keypress there. Many keys result in only one byte stored,
+; say for an alphabetic letter, but longer sequences are possible when using
+; special keys such as up or down error.
+;
+; Build a human readable representation of the buffer and display it. This was
+; initally for debugging but it may become a permanent feature.
 
 Procedure display_keypress_buffer()
   vt100::save_cursor
@@ -289,6 +331,8 @@ Procedure display_keypress_buffer()
       s = s + "SPC "
     ElseIf keypress_buffer(i) < ' '
       s = s + "^" + Chr('A' + keypress_buffer(i) - 1) + " "
+    ElseIf keypress_buffer(i) = #DELETE
+      s = s + "DEL "
     Else
       s = s + Chr(keypress_buffer(i)) + " "
     EndIf
@@ -346,6 +390,11 @@ Procedure.i process_key()
       For i = top_left\row To bottom_right\row
         move_cursor(#ARROW_DOWN)
       Next i
+    Case #HOME_KEY
+      cursor_position = top_left
+    Case #END_KEY
+      cursor_position = bottom_right
+      cursor_position\col = top_left\col
     Default
       ; To be provided
   EndSelect
