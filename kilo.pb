@@ -14,10 +14,10 @@
 ;
 ; * System calls:
 ;
-; PureBasic has functions that can replace many raw system library functions.
+; PureBasic has procedures that can replace many raw system library functions.
 ; Examples include `AllocateMemory` for `malloc` and `CopyMemory` for `memcpy`.
 ;
-; For functions that don't have PureBasic analogs--or those I haven't found
+; For procedures that don't have PureBasic analogs--or those I haven't found
 ; yet--PureBasic provides an excellent interface to C code.
 ;
 ; So far everything I have needed is found in `libc`, which is `libc.dylib`
@@ -38,6 +38,13 @@
 ; checks in either the main project or in the common library includes.
 ;
 ; This is running on a macOS desktop in 2025.
+;
+; * Error handling:
+;
+; I started out trying to use robust error handling but that is slowing me down
+; and obscuring my view of the things I want to concentrate on. I'm going to
+; yank most of the error handling out but leave return values in place so that
+; I can add error handling back in once the editor is complete.
 
 ; ----- Bugs, notes, and quirks -----------------------------------------------
 ;
@@ -52,7 +59,10 @@
 ;   negative numbers.
 ;
 ; * Most of the example PureBasic code I've seen guards code backwards from
-;   my personal coding standards. I'm going to try to use their style.
+;   my personal coding standards. I'm started out using this style but I
+;   find it to be unnatural. While there may be some dangling code in the
+;   PureBasic style, I'm using the Troy style from now on and will retrofit
+;   it into existing code when I see the other style.
 ;
 ;   I would code:
 ;
@@ -72,8 +82,8 @@
 ; This gets a bit odd feeling when there are multiple error paths to deal
 ; with.
 ;
-; * Functions that can fail return #true on success and #false on failure.
-;   Functions that really don't need to report success or failure are still
+; * Procedures that can fail return #true on success and #false on failure.
+;   Procedures that really don't need to report success or failure are still
 ;   declared as returning a value as well.
 
 EnableExplicit
@@ -108,8 +118,8 @@ Global.tROWCOL   screen_size        ; dimensions of physical screen
 Global.tROWCOL   message_area       ; start of message output area
 Global.tROWCOL   top_left           ; bounds of the editable region
 Global.tROWCOL   bottom_right       ; NW corner, SE corner
-Global.tTERMIOS original_termios   ; saved to restore at exit
-Global.tTERMIOS raw_termios        ; not really used after set, kept for reference
+Global.tTERMIOS  original_termios   ; saved to restore at exit
+Global.tTERMIOS  raw_termios        ; not really used after set, kept for reference
 
 ; ----- Common error exit -----------------------------------------------------
 ;

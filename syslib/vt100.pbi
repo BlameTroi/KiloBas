@@ -41,6 +41,7 @@ XIncludeFile "unistd.pbi"       ; primarily for read() and write()
 XIncludeFile "errno.pbi"        ; you never know
 XincludeFile "termios.pbi"      ; terminal control
 XIncludeFile "common.pbi"       ; my tool box
+XIncludeFile "bufwriter.pbi"    ; buffer to stdout for terminal writes
 
 ; ----- Exposed procedures, macros, and constants -----------------------------
 
@@ -50,6 +51,7 @@ DeclareModule vt100
   UseModule errno
   UseModule termios
   UseModule common
+  UseModule bufwriter
 
   ; ----- Command sequences are identified by a prefix -------------------------
   ;
@@ -229,10 +231,12 @@ Module vt100
   UseModule errno
   UseModule termios
   UseModule common
+  UseModule bufwriter
 
   ; ----- Globals ---------------------------------------------------------------
   ;
-  ; None as yet.
+  ; So far just 
+  Define.bcb *bcb
 
   ; ----- Command sequence prefix helpers. ------------------------------------
   ;
