@@ -45,6 +45,9 @@
 ; and obscuring my view of the things I want to concentrate on. I'm going to
 ; yank most of the error handling out but leave return values in place so that
 ; I can add error handling back in once the editor is complete.
+;
+; I wouldn't advise anyone ot trust my code without having reviewed and tested
+; it themselves. :)
 
 ; ----- Bugs, notes, and quirks -----------------------------------------------
 ;
@@ -84,7 +87,7 @@
 ;
 ; * Procedures that can fail return #true on success and #false on failure.
 ;   Procedures that really don't need to report success or failure are still
-;   declared as returning a value as well.
+;   defined as returning a value as well.
 
 EnableExplicit
 
@@ -98,204 +101,218 @@ EnableExplicit
 XIncludeFile "syslib/errno.pbi"   ; the errors and how to decode them
 XIncludeFile "syslib/termios.pbi" ; the termios structure, defines
 XIncludeFile "syslib/unistd.pbi" ; The parts I need.
-
 XIncludeFile "syslib/common.pbi" ; common macros, constants, and procedures
-
 XIncludeFile "syslib/vt100.pbi"  ; VT100/ANSI terminal control API - no UseModule
 
-UseModule errno
-UseModule termios
-UseModule unistd
-UseModule common
+DeclareModule kilo
+  Declare Mainline()
+EndDeclareModule
 
-; ----- Common or global data -------------------------------------------------
-;
-; This could be collected into a `context` structure that is dynamically
-; allocated, but at this stage of development global variables suffice.
+Module kilo
+  UseModule errno
+  UseModule termios
+  UseModule unistd
+  UseModule common
 
-Global.tROWCOL   cursor_position    ; current position
-Global.tROWCOL   screen_size        ; dimensions of physical screen
-Global.tROWCOL   message_area       ; start of message output area
-Global.tROWCOL   top_left           ; bounds of the editable region
-Global.tROWCOL   bottom_right       ; NW corner, SE corner
-Global.tTERMIOS  original_termios   ; saved to restore at exit
-Global.tTERMIOS  raw_termios        ; not really used after set, kept for reference
-
-; ----- Common error exit -----------------------------------------------------
-;
-; ANSI key sequences are mapped into meaningful integer values.
-
-Enumeration kilo_keys 1000
-  #ARROW_UP
-  #ARROW_DOWN
-  #ARROW_RIGHT
-  #ARROW_LEFT
-  #DEL_KEY
-  #PAGE_UP
-  #PAGE_DOWN
-  #HOME_KEY
-  #END_KEY
-EndEnumeration
-; The read_key routine can return an error code if needed, but for now that is
-; just treated as if the user pressed ESC.
-#BAD_SEQUENCE_READ = #ESCAPE
-
-; ----- Common error exit -----------------------------------------------------
-;
-; The original code has a `die` procedure. I've created something that allows
-; for a little more information if desired.
-;
-; Unfortunately we can't use the names of the parameters with defaults on
-; procedure calls. This parameter ordering puts the values that might be
-; overridden at the front of the list.
-
-Procedure abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
-  If erase
-    vt100::erase_screen
-    vt100::cursor_home
-    vt100::restore_mode(@original_termios)
-  ElseIf reset
-    vt100::HARD_RESET
-  EndIf
-  vt100::cursor_show
-  abexit(s, extra, rc)
-EndProcedure
-
-; ----- Controlling the presentation ------------------------------------------
-;
-; The screen display is superficially vi like. The top and bottom two rows
-; are reserved. As in vi, empty lines are flagged with a tilde (~).
-;
-; I might try to switch to a format more like that of XEdit in CMS.
-
-Procedure.i move_cursor(c.i)
-  With cursor_position
-    Select c
-      Case #ARROW_UP               ; N
-        \row = \row - 1
-      Case #ARROW_RIGHT            ; E
-        \col = \col + 1
-      Case #ARROW_DOWN             ; S
-        \row = \row + 1
-      Case #ARROW_LEFT             ; W
-        \col = \col - 1
-    EndSelect
-    ; Keep the cursor in bounds.
-    \row = max(\row, top_left\row)
-    \row = min(\row, bottom_right\row)
-    \col = max(\col, top_left\col)
-    \col = min(\col, bottom_right\col)
-  EndWith
-EndProcedure
-
-Procedure.i cursor_home()
-  vt100::cursor_position(top_left\row, top_left\col)
-EndProcedure
-
-Procedure.i draw_rows()
-  vt100::save_cursor
-  cursor_home()
-  Define.i row
-  For row = top_left\row To bottom_right\row
-    vt100::erase_line
-    vt100::write_string(~"~")
-    vt100::write_string(~"\r\n")
-  Next row
-  vt100::restore_cursor
-EndProcedure
-
-Procedure.i refresh_screen()
-  vt100::cursor_hide
-  cursor_home()
-  draw_rows()
-  vt100::cursor_position(cursor_position\row, cursor_position\col)
-  vt100::cursor_show
-EndProcedure
-
-; ----- Read a key press and return it one byte at a time ---------------------
-;
-; On macOS read doesn't mark no input as a hard error so check for nothing read
-; and handle as if we got an error return flagged #EAGAIN. Proper handling
-; of things such as PF keys is still to do.
-
-Global Dim keypress_buffer.a(32)
-
-Procedure.i read_key()
-  Define.i n, e
-  For n = 0 To 31
-    keypress_buffer(n) = 0
-  Next n
-  ; Spin until we get some sort of key. It might be a plain textual key or
-  ; the start of an ANSI sequence.
-  Repeat
-    n = vt100::read_key(keypress_buffer(0))
-    If n = -1
-      e = fERRNO()
-      If e <> #EAGAIN
-        Abort("Editor_Read_key", Str(e))
-      Else
-        n = 0
-      EndIf
-    EndIf
-  Until n<>0
-  ; If the key is not ESC, it can be returned straight away.
-  If keypress_buffer(0) <> #ESCAPE
-    ; There's the Delete key and FN Delete. FN Delete comes through as ESC 3 ~.
-    If keypress_buffer(0) = #DELETE
-      ProcedureReturn #DEL_KEY
-    EndIf
-    ProcedureReturn keypress_buffer(0)
-  EndIf
-  ; Collect the rest of the sequence. If the next read times out then the user
-  ; actually pressed ESC. No error checking is done. If one occurs it will be
-  ; processed as a time out. So, any error or timeout on the next two
-  ; characters read will return a lone ESC to the caller.
+  ; ----- Common or global data -------------------------------------------------
   ;
-  ; We need to read at least three bytes to identify a sequence, and more may
-  ; be needed. Read the next two bytes and if there is an error/time out, just
-  ; return an ESC.
-  n = vt100::read_key(keypress_buffer(1))
-  If n <> 1
-    ProcedureReturn #ESCAPE
-  EndIf
-  n = vt100::read_key(keypress_buffer(2))
-  If n <> 1
-    ProcedureReturn #BAD_SEQUENCE_READ
-  EndIf
-  ; If first byte is ESC, further filter on second byte. So far sequences
-  ; prefixed by ESC [ and ESC O are supported.
-  If keypress_buffer(1) = '['
-    ; Numererics are followed by a tilde (~) requiring a fourth byte to complete
-    ; the sequence.
-    If keypress_buffer(2) >= '0' and keypress_buffer(2) <= '9'
-      n = vt100::read_key(keypress_buffer(3))
-      If n <> 1 Or keypress_buffer(3) <> '~'
-        ProcedureReturn #BAD_SEQUENCE_READ
-      EndIf
-      Select keypress_buffer(2)
-        Case '1', '7'
-          ProcedureReturn #HOME_KEY
-        Case '3'
-          ProcedureReturn #DEL_KEY
-        Case '4', '8'
-          ProcedureReturn #END_KEY
-        Case '5'
-          ProcedureReturn #PAGE_UP
-        Case '6'
-          ProcedureReturn #PAGE_DOWN
-        Default
-          ProcedureReturn #BAD_SEQUENCE_READ
+  ; This could be collected into a `context` structure that is dynamically
+  ; allocated, but at this stage of development global variables suffice.
+
+  Global.tROWCOL   cursor_position    ; current position
+  Global.tROWCOL   screen_size        ; dimensions of physical screen
+  Global.tROWCOL   message_area       ; start of message output area
+  Global.tROWCOL   top_left           ; bounds of the editable region
+  Global.tROWCOL   bottom_right       ; NW corner, SE corner
+  Global.tTERMIOS  original_termios   ; saved to restore at exit
+  Global.tTERMIOS  raw_termios        ; not really used after set, kept for reference
+
+  ; ----- Common error exit -----------------------------------------------------
+  ;
+  ; ANSI key sequences are mapped into meaningful integer values.
+
+  Enumeration kilo_keys 1000
+    #ARROW_UP
+    #ARROW_DOWN
+    #ARROW_RIGHT
+    #ARROW_LEFT
+    #DEL_KEY
+    #PAGE_UP
+    #PAGE_DOWN
+    #HOME_KEY
+    #END_KEY
+  EndEnumeration
+  ; The read_key routine can return an error code if needed, but for now that is
+  ; just treated as if the user pressed ESC.
+  #BAD_SEQUENCE_READ = #ESCAPE
+
+  ; ----- Common error exit -----------------------------------------------------
+  ;
+  ; The original code has a `die` procedure. I've created something that allows
+  ; for a little more information if desired.
+  ;
+  ; Unfortunately we can't use the names of the parameters with defaults on
+  ; procedure calls. This parameter ordering puts the values that might be
+  ; overridden at the front of the list.
+
+  Procedure abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
+    If erase
+      vt100::erase_screen
+      vt100::cursor_home
+      vt100::restore_mode(@original_termios)
+    ElseIf reset
+      vt100::HARD_RESET
+    EndIf
+    vt100::cursor_show
+    abexit(s, extra, rc)
+  EndProcedure
+
+  ; ----- Controlling the presentation ------------------------------------------
+  ;
+  ; The screen display is superficially vi like. The top and bottom two rows
+  ; are reserved. As in vi, empty lines are flagged with a tilde (~).
+  ;
+  ; I might try to switch to a format more like that of XEdit in CMS.
+
+  Procedure.i move_cursor(c.i)
+    With cursor_position
+      Select c
+        Case #ARROW_UP               ; N
+          \row = \row - 1
+        Case #ARROW_RIGHT            ; E
+          \col = \col + 1
+        Case #ARROW_DOWN             ; S
+          \row = \row + 1
+        Case #ARROW_LEFT             ; W
+          \col = \col - 1
       EndSelect
-    Else
+      ; Keep the cursor in bounds.
+      \row = max(\row, top_left\row)
+      \row = min(\row, bottom_right\row)
+      \col = max(\col, top_left\col)
+      \col = min(\col, bottom_right\col)
+    EndWith
+  EndProcedure
+
+  Procedure.i cursor_home()
+    vt100::cursor_position(top_left\row, top_left\col)
+  EndProcedure
+
+  Procedure.i draw_rows()
+    vt100::save_cursor
+    cursor_home()
+    Define.i row
+    For row = top_left\row To bottom_right\row
+      vt100::erase_line
+      vt100::write_string(~"~")
+      vt100::write_string(~"\r\n")
+    Next row
+    vt100::restore_cursor
+  EndProcedure
+
+  Procedure.i refresh_screen()
+    vt100::cursor_hide
+    cursor_home()
+    draw_rows()
+    vt100::cursor_position(cursor_position\row, cursor_position\col)
+    vt100::cursor_show
+  EndProcedure
+
+  ; ----- Read a key press and return it one byte at a time ---------------------
+  ;
+  ; On macOS read doesn't mark no input as a hard error so check for nothing read
+  ; and handle as if we got an error return flagged #EAGAIN. Proper handling
+  ; of things such as PF keys is still to do.
+
+  Global Dim keypress_buffer.a(32)
+
+  Procedure.i read_key()
+    Define.i n, e
+    For n = 0 To 31
+      keypress_buffer(n) = 0
+    Next n
+    ; Spin until we get some sort of key. It might be a plain textual key or
+    ; the start of an ANSI sequence.
+    Repeat
+      n = vt100::read_key(keypress_buffer(0))
+      If n = -1
+        e = fERRNO()
+        If e <> #EAGAIN
+          Abort("Editor_Read_key", Str(e))
+        Else
+          n = 0
+        EndIf
+      EndIf
+    Until n<>0
+    ; If the key is not ESC, it can be returned straight away.
+    If keypress_buffer(0) <> #ESCAPE
+      ; There's the Delete key and FN Delete. FN Delete comes through as ESC 3 ~.
+      If keypress_buffer(0) = #DELETE
+        ProcedureReturn #DEL_KEY
+      EndIf
+      ProcedureReturn keypress_buffer(0)
+    EndIf
+    ; Collect the rest of the sequence. If the next read times out then the user
+    ; actually pressed ESC. No error checking is done. If one occurs it will be
+    ; processed as a time out. So, any error or timeout on the next two
+    ; characters read will return a lone ESC to the caller.
+    ;
+    ; We need to read at least three bytes to identify a sequence, and more may
+    ; be needed. Read the next two bytes and if there is an error/time out, just
+    ; return an ESC.
+    n = vt100::read_key(keypress_buffer(1))
+    If n <> 1
+      ProcedureReturn #ESCAPE
+    EndIf
+    n = vt100::read_key(keypress_buffer(2))
+    If n <> 1
+      ProcedureReturn #BAD_SEQUENCE_READ
+    EndIf
+    ; If first byte is ESC, further filter on second byte. So far sequences
+    ; prefixed by ESC [ and ESC O are supported.
+    If keypress_buffer(1) = '['
+      ; Numererics are followed by a tilde (~) requiring a fourth byte to complete
+      ; the sequence.
+      If keypress_buffer(2) >= '0' and keypress_buffer(2) <= '9'
+        n = vt100::read_key(keypress_buffer(3))
+        If n <> 1 Or keypress_buffer(3) <> '~'
+          ProcedureReturn #BAD_SEQUENCE_READ
+        EndIf
+        Select keypress_buffer(2)
+          Case '1', '7'
+            ProcedureReturn #HOME_KEY
+          Case '3'
+            ProcedureReturn #DEL_KEY
+          Case '4', '8'
+            ProcedureReturn #END_KEY
+          Case '5'
+            ProcedureReturn #PAGE_UP
+          Case '6'
+            ProcedureReturn #PAGE_DOWN
+          Default
+            ProcedureReturn #BAD_SEQUENCE_READ
+        EndSelect
+      Else
+        Select keypress_buffer(2)
+          Case 'A'
+            ProcedureReturn #ARROW_UP
+          Case 'B'
+            ProcedureReturn #ARROW_DOWN
+          Case 'C'
+            ProcedureReturn #ARROW_RIGHT
+          Case 'D'
+            ProcedureReturn #ARROW_LEFT
+          Case 'H'
+            ProcedureReturn #HOME_KEY
+          Case 'F'
+            ProcedureReturn #END_KEY
+          Default
+            ProcedureReturn #BAD_SEQUENCE_READ
+        EndSelect
+      EndIf
+      ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
+    ElseIf keypress_buffer(1) = 'O' ; upper case 'o'
       Select keypress_buffer(2)
-        Case 'A'
-          ProcedureReturn #ARROW_UP
-        Case 'B'
-          ProcedureReturn #ARROW_DOWN
-        Case 'C'
-          ProcedureReturn #ARROW_RIGHT
-        Case 'D'
-          ProcedureReturn #ARROW_LEFT
         Case 'H'
           ProcedureReturn #HOME_KEY
         Case 'F'
@@ -303,150 +320,141 @@ Procedure.i read_key()
         Default
           ProcedureReturn #BAD_SEQUENCE_READ
       EndSelect
-    EndIf
-    ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
-  ElseIf keypress_buffer(1) = 'O' ; upper case 'o'
-    Select keypress_buffer(2)
-      Case 'H'
-        ProcedureReturn #HOME_KEY
-      Case 'F'
-        ProcedureReturn #END_KEY
-      Default
-        ProcedureReturn #BAD_SEQUENCE_READ
-    EndSelect
-    ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
-  Else
-    ProcedureReturn #BAD_SEQUENCE_READ ; but we can get here
-  EndIf
-  ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
-EndProcedure
-
-; ----- Display the keypress buffer as built in read_key ----------------------
-;
-; The keypress_buffer is a 32 byte nil terminated ASCII byte array. `read_key`
-; stores the current keypress there. Many keys result in only one byte stored,
-; say for an alphabetic letter, but longer sequences are possible when using
-; special keys such as up or down error.
-;
-; Build a human readable representation of the buffer and display it. This was
-; initally for debugging but it may become a permanent feature.
-
-Procedure display_keypress_buffer()
-  vt100::save_cursor
-  Define.s s = "key: "
-  Define.i i
-  While keypress_buffer(i)
-    If keypress_buffer(i) = #ESCAPE
-      s = s + "ESC "
-    ElseIf keypress_buffer(i) = ' '
-      s = s + "SPC "
-    ElseIf keypress_buffer(i) < ' '
-      s = s + "^" + Chr('A' + keypress_buffer(i) - 1) + " "
-    ElseIf keypress_buffer(i) = #DELETE
-      s = s + "DEL "
+      ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
     Else
-      s = s + Chr(keypress_buffer(i)) + " "
+      ProcedureReturn #BAD_SEQUENCE_READ ; but we can get here
     EndIf
-    i = i + 1
-  Wend
-  Define.tROWCOL p
-  vt100::cursor_position(top_left\row - 1, top_left\col + 20)
-  vt100::write_string(s + "              ")
-  vt100::restore_cursor
-EndProcedure
+    ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
+  EndProcedure
 
-; ----- Handle key press ------------------------------------------------------
-;
-; Route control based on mode and key. Try to keep any one Case clause
-; short--use Procedures when appropriate.
-;
-; A "key" returned from read_key might represent a multi-byte ANSI sequence. If
-; so, it is mapped to some value from the kilo_keys enumeration. That
-; enumeration starts from 1000.
-;
-; This procedure returns #true when the user requests that the session end.
+  ; ----- Display the keypress buffer as built in read_key ----------------------
+  ;
+  ; The keypress_buffer is a 32 byte nil terminated ASCII byte array. `read_key`
+  ; stores the current keypress there. Many keys result in only one byte stored,
+  ; say for an alphabetic letter, but longer sequences are possible when using
+  ; special keys such as up or down error.
+  ;
+  ; Build a human readable representation of the buffer and display it. This was
+  ; initally for debugging but it may become a permanent feature.
 
-Procedure.i process_key()
-  Define.i c = read_key()
-  display_keypress_buffer()
-  Select c
-    Case #CTRL_D ; display screen size.
-      Define.tROWCOL p
-      vt100::report_screen_dimensions(@p)
-      vt100::display_message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col), @message_area)
-    Case #CTRL_P ; display current cursor position
-      Define.tROWCOL p
-      vt100::report_cursor_position(@p)
-      vt100::display_message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col), @message_area)
-    Case #CTRL_Q ; quit program
-      vt100::cursor_position(10, 1)
-      ProcedureReturn #true
-    Case #CTRL_A ; force an run through the abort path
-      vt100::save_cursor
-      vt100::cursor_position(5, 8)
-      vt100::write_string("Game Over Man!!!")
-      vt100::restore_cursor
-      Delay(2500)
-      abort("You forced an abort", "", #false, #true, -1)
-    Case #ARROW_UP, #ARROW_RIGHT, #ARROW_DOWN, #ARROW_LEFT
-      display_keypress_buffer()
-      move_cursor(c)
-    Case #PAGE_UP
-      Define.i i
-      For i = top_left\row To bottom_right\row
-        move_cursor(#ARROW_UP)
-      Next i
-    Case #PAGE_DOWN
-      Define.i i
-      For i = top_left\row To bottom_right\row
-        move_cursor(#ARROW_DOWN)
-      Next i
-    Case #HOME_KEY
-      cursor_position = top_left
-    Case #END_KEY
-      cursor_position = bottom_right
-      cursor_position\col = top_left\col
-    Default
-      ; To be provided
-  EndSelect
-  ProcedureReturn #false
-EndProcedure
+  Procedure display_keypress_buffer()
+    vt100::save_cursor
+    Define.s s = "key: "
+    Define.i i
+    While keypress_buffer(i)
+      If keypress_buffer(i) = #ESCAPE
+        s = s + "ESC "
+      ElseIf keypress_buffer(i) = ' '
+        s = s + "SPC "
+      ElseIf keypress_buffer(i) < ' '
+        s = s + "^" + Chr('A' + keypress_buffer(i) - 1) + " "
+      ElseIf keypress_buffer(i) = #DELETE
+        s = s + "DEL "
+      Else
+        s = s + Chr(keypress_buffer(i)) + " "
+      EndIf
+      i = i + 1
+    Wend
+    Define.tROWCOL p
+    vt100::cursor_position(top_left\row - 1, top_left\col + 20)
+    vt100::write_string(s + "              ")
+    vt100::restore_cursor
+  EndProcedure
 
-; ----- Kilo top level --------------------------------------------------------
-;
-; Set up the screen and do whatever is requested.
+  ; ----- Handle key press ------------------------------------------------------
+  ;
+  ; Route control based on mode and key. Try to keep any one Case clause
+  ; short--use Procedures when appropriate.
+  ;
+  ; A "key" returned from read_key might represent a multi-byte ANSI sequence. If
+  ; so, it is mapped to some value from the kilo_keys enumeration. That
+  ; enumeration starts from 1000.
+  ;
+  ; This procedure returns #true when the user requests that the session end.
 
-Procedure Mainline()
-  ; Set up the terminal and identify screen areas.
-  vt100::initialize()
-  vt100::get_termios(@original_termios)
-  vt100::set_raw_mode(@raw_termios)
-  vt100::report_screen_dimensions(@screen_size)
-  message_area = screen_size
-  message_area\col = 1
-  message_area\row = message_area\row - 1
-  top_left\row = 3
-  top_left\col = 1
-  bottom_right = screen_size
-  bottom_right\row = bottom_right\row - 3
-  ; Greet the user.
-  vt100::erase_screen
-  cursor_home()
-  vt100::report_cursor_position(@cursor_position)
-  vt100::display_message("I", "Welcome to kilo in PureBasic!", @message_area)
-  vt100::flush()
-  ; The top level mainline is really small.
-  Repeat
-    refresh_screen()
-  Until process_key()
-  vt100::immediate()
-  ; Restore the terminal to its original settings.
-  ; TODO: Can I save and restore the complete screen state?
-  vt100::restore_mode(@original_termios)
-  vt100::terminate()
-EndProcedure
+  Procedure.i process_key()
+    Define.i c = read_key()
+    display_keypress_buffer()
+    Select c
+      Case #CTRL_D ; display screen size.
+        Define.tROWCOL p
+        vt100::report_screen_dimensions(@p)
+        vt100::display_message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col), @message_area)
+      Case #CTRL_P ; display current cursor position
+        Define.tROWCOL p
+        vt100::report_cursor_position(@p)
+        vt100::display_message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col), @message_area)
+      Case #CTRL_Q ; quit program
+        vt100::cursor_position(10, 1)
+        ProcedureReturn #true
+      Case #CTRL_A ; force an run through the abort path
+        vt100::save_cursor
+        vt100::cursor_position(5, 8)
+        vt100::write_string("Game Over Man!!!")
+        vt100::restore_cursor
+        Delay(2500)
+        abort("You forced an abort", "", #false, #true, -1)
+      Case #ARROW_UP, #ARROW_RIGHT, #ARROW_DOWN, #ARROW_LEFT
+        display_keypress_buffer()
+        move_cursor(c)
+      Case #PAGE_UP
+        Define.i i
+        For i = top_left\row To bottom_right\row
+          move_cursor(#ARROW_UP)
+        Next i
+      Case #PAGE_DOWN
+        Define.i i
+        For i = top_left\row To bottom_right\row
+          move_cursor(#ARROW_DOWN)
+        Next i
+      Case #HOME_KEY
+        cursor_position = top_left
+      Case #END_KEY
+        cursor_position = bottom_right
+        cursor_position\col = top_left\col
+      Default
+        ; To be provided
+    EndSelect
+    ProcedureReturn #false
+  EndProcedure
 
-Mainline()
+  ; ----- Kilo top level --------------------------------------------------------
+  ;
+  ; Set up the screen and do whatever is requested.
+
+  Procedure Mainline()
+    ; Set up the terminal and identify screen areas.
+    vt100::initialize()
+    vt100::get_termios(@original_termios)
+    vt100::set_raw_mode(@raw_termios)
+    vt100::report_screen_dimensions(@screen_size)
+    message_area = screen_size
+    message_area\col = 1
+    message_area\row = message_area\row - 1
+    top_left\row = 3
+    top_left\col = 1
+    bottom_right = screen_size
+    bottom_right\row = bottom_right\row - 3
+    ; Greet the user.
+    vt100::erase_screen
+    cursor_home()
+    vt100::report_cursor_position(@cursor_position)
+    vt100::display_message("I", "Welcome to kilo in PureBasic!", @message_area)
+    vt100::flush()
+    ; The top level mainline is really small.
+    Repeat
+      refresh_screen()
+    Until process_key()
+    vt100::immediate()
+    ; Restore the terminal to its original settings.
+    ; TODO: Can I save and restore the complete screen state?
+    vt100::restore_mode(@original_termios)
+    vt100::terminate()
+  EndProcedure
+
+EndModule
+
+kilo::Mainline()
 
 End
 
