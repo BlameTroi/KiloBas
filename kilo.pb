@@ -159,7 +159,7 @@ Module kilo
     If erase
       vt100::erase_screen
       vt100::cursor_home
-      vt100::restore_mode(@original_termios)
+      vt100::terminate()
     ElseIf reset
       vt100::HARD_RESET
     EndIf
@@ -419,14 +419,17 @@ Module kilo
   EndProcedure
 
   ; ----- Kilo top level --------------------------------------------------------
-  ;
-  ; Set up the screen and do whatever is requested.
 
-  Procedure Mainline()
-    ; Set up the terminal and identify screen areas.
-    vt100::initialize()
-    vt100::get_termios(@original_termios)
-    vt100::set_raw_mode(@raw_termios)
+  ; Put terminal in raw mode and set up buffering.
+
+  Procedure Terminal_Initialization()
+    vt100::initialize(4096, #true)
+  EndProcedure
+
+  ; Get the screen dimensions and define the corners of the various regions or
+  ; areas.
+
+  Procedure Analyze_Geometry()
     vt100::report_screen_dimensions(@screen_size)
     message_area = screen_size
     message_area\col = 1
@@ -435,21 +438,51 @@ Module kilo
     top_left\col = 1
     bottom_right = screen_size
     bottom_right\row = bottom_right\row - 3
-    ; Greet the user.
+  EndProcedure
+
+  ; Either greet the user with an empty editor or load in a single file named
+  ; on the command line.
+
+  Procedure Greet_or_Load_File()
     vt100::erase_screen
     cursor_home()
     vt100::report_cursor_position(@cursor_position)
     vt100::display_message("I", "Welcome to kilo in PureBasic!", @message_area)
     vt100::flush()
-    ; The top level mainline is really small.
+  EndProcedure
+
+  ; Loop until the user requests we quit.
+
+  Procedure Editor_Loop()
     Repeat
       refresh_screen()
     Until process_key()
     vt100::immediate()
-    ; Restore the terminal to its original settings.
-    ; TODO: Can I save and restore the complete screen state?
-    vt100::restore_mode(@original_termios)
+  EndProcedure
+
+  ; If the buffer is dirty ask if it should be written out. Do so if yes.
+
+  Procedure Write_if_Dirty()
+    ; to be provided
+  EndProcedure
+
+  ; Restore the terminal to its original state and spin down buffering.
+
+  Procedure Terminal_Termination()
     vt100::terminate()
+  EndProcedure
+
+  ; Just a top level mainline as a road map.
+
+  Procedure Mainline()
+    ; If we had logging, commom subsystem initialization
+    Terminal_Initialization()
+    Analyze_Geometry()
+    Greet_or_Load_File()
+    Editor_Loop()
+    Write_if_Dirty()
+    Terminal_Termination()
+    ; If we had logging, commom subsystem termination
   EndProcedure
 
 EndModule

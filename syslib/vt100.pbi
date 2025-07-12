@@ -192,15 +192,9 @@ DeclareModule vt100
 
   ; Set up and tear down.
 
-  Declare.i initialize()            ; basic setup, mostly for buffering
-  Declare.i terminate()             ; teardown
+  Declare.i initialize(bufsz.i=4096, raw.i=#true)    ; basic setup, mostly for buffering
+  Declare.i terminate()                          ; teardown
 
-  ; TODO: These need to be wrapped in the module and should not be called
-  ; directly.
-
-  Declare.i get_termios(*p.tTERMIOS)
-  Declare.i restore_mode(*p.tTERMIOS)
-  Declare.i set_raw_mode(*raw.tTERMIOS)
 
   ; Input procedures:
 
@@ -241,9 +235,11 @@ Module vt100
 
   ; ----- Globals ---------------------------------------------------------------
   ;
-  ; So far all I keep is the *bcb.
+  ; Buffer management and termios for mode switching.
 
-  Global *bcb.bcb
+  Global.bcb      *bcb
+  Global.tTERMIOS *original
+  Global.tTERMIOS *raw
 
   ; ----- Command sequence prefix helpers. ------------------------------------
   ;
@@ -376,23 +372,25 @@ Module vt100
     ProcedureReturn #true
   EndProcedure
 
-  ; ----- Disable raw mode/restore prior saved terminal configuration -----------
+  ; ----- Enable and disable raw mode by termios manipulation -------------------
   ;
-  ; If the client wants to restore the terminal to its configuration before it
-  ; was placed in raw mode, get_termios can be used to retrieve the current
-  ; TERMIOS structure prior to set_raw_mode.
+  ; vt100::initialize should be called before performing any other actions.
+  ; If requested, the terminal will be put into raw mode. vt100::terminate
+  ; should be called at program end. If the terminal was put into raw mode
+  ; during vt100::initialize, it will be restored to its original settings.
   ;
   ; These are the only places where an error will end the program. If I can't
   ; get or set the termios, there's no point in doing anything else.
 
-  Procedure.i get_termios(*p.tTERMIOS)
+  Procedure.i get_termios()
+    Define.tTERMIOS *p = AllocateMemory(sizeof(tTERMIOS) + 256) ; allow for extra
     If -1 = fTCGETATTR(0, *p)
       abexit("Enable_Raw_Mode failed tcgetattr", Str(fERRNO()))
     EndIf
-    ProcedureReturn #true
+    ProcedureReturn *p
   EndProcedure
 
-  Procedure.i restore_mode(*p.tTERMIOS)
+  Procedure.i set_termios(*p.tTERMIOS)
     If -1 = fTCSETATTR(0, #TCSAFLUSH, *p)
       abexit("Disable_Raw_Mode failed tcsetattr", Str(fERRNO()))
     Endif
@@ -411,9 +409,9 @@ Module vt100
   ; termios_p->c_cflag &= ~(CSIZE | PARENB); <-------- this is not in kilo
   ; termios_p->c_cflag |= CS8;
 
-  Procedure.i set_raw_mode(*raw.tTERMIOS)
-    get_termios(*raw)
-    With *raw
+  Procedure.i set_raw_mode()
+    Define.tTERMIOS *p = get_termios()
+    With *p
       \c_iflag = \c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
       \c_oflag = \c_oflag & ~(#OPOST)
       \c_lflag = \c_lflag & ~(#ECHO | #ICANON | #IEXTEN | #ISIG)
@@ -421,10 +419,10 @@ Module vt100
       \c_cc[#VMIN] = 0       ; min number of bytes to return from read
       \c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
     EndWith
-    If -1 = fTCSETATTR(0, #TCSAFLUSH, *raw)
+    If -1 = fTCSETATTR(0, #TCSAFLUSH, *p)
       abexit("Enable_Raw_Mode failed tcsetattr", Str(fERRNO()))
     EndIf
-    ProcedureReturn #true
+    ProcedureReturn *p
   EndProcedure
 
   ; ----- Buffered output -------------------------------------------------------
@@ -440,11 +438,6 @@ Module vt100
   ; Actual terminal writes (buffered or not) are issued directly above in the
   ; vt100 code. Reads are done via read() in unistd.
 
-  Procedure.i initialize()
-    *bcb = buffer_initialize()
-    *bcb\buffering = #false
-  EndProcedure
-
   Procedure.i immediate()
     ; ProcedureReturn buffer_off(*bcb)
   EndProcedure
@@ -457,8 +450,33 @@ Module vt100
     ProcedureReturn buffer_flush(*bcb)
   EndProcedure
 
+  ; ----- Spin up, spin down ----------------------------------------------------
+  ;
+  ; Initialization of both buffering and the terminal io state should be done
+  ; before issuing any other calls. Termination releases storage and returns
+  ; the terminal to its original state.
+
+  Procedure.i initialize(bufsz.i=4096, raw.i=#true)
+    *bcb = buffer_initialize(bufsz)
+    *bcb\buffering = #false
+    If raw
+      *original = get_termios()
+      *raw = set_raw_mode()
+    EndIf
+    ProcedureReturn #true
+  EndProcedure
+
   Procedure.i terminate()
-    ProcedureReturn buffer_terminate(*bcb)
+    buffer_terminate(*bcb)
+    *bcb = 0
+    If *raw
+      set_termios(*original)
+      FreeMemory(*raw)
+      *raw = 0
+      FreeMemory(*original)
+      *original = 0
+    EndIf
+    ProcedureReturn #true
   EndProcedure
 
 EndModule

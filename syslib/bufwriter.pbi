@@ -19,15 +19,13 @@ XIncludeFile "unistd.pbi"
 
 DeclareModule bufwriter
 
-  UseModule unistd
-
   ; ----- Our control block -----------------------------------------------------
-  ; 
+  ;
   ; I keep track of both the count of bytes used in the buffer and the location
   ; of the next available byte. It is redundant but I prefer way the code
   ; flows.
 
-  #BCB_BUF_MAX = 4096
+  #BCB_DEFAULT = 4096     ; buffer size
   Structure bcb
     size.i                ; bytes allocated
     used.i                ; bytes used
@@ -38,16 +36,16 @@ DeclareModule bufwriter
 
   ; ----- API -------------------------------------------------------------------
 
-  Declare.i buffer_initialize(size.i=#BCB_BUF_MAX) ; create the buffer
-  Declare.i buffer_off(*bcb)                       ; turn buffering off
-  Declare.i buffer_on(*bcb)                        ; turn buffering on
-  Declare.i write_s(*bcb, s.s)                     ; write a string to the buffer
-  Declare.i write_s_immediate(*bcb, s.s)           ; do it now
-  Declare.i write_m(*bcb, *m, length.i)            ; write a byte array to the buffer
-  Declare.i write_m_immediate(*bcb, *m, length.i)  ; do it now
-  Declare.i buffer_flush(*bcb)                     ; write the buffer
-  Declare.i buffer_clear(*bcb)                     ; clear the buffer
-  Declare.i buffer_terminate(*bcb)                 ; flush and release the buffer
+  Declare.i buffer_initialize(bufsz.i=#BCB_DEFAULT) ; create the buffer
+  Declare.i buffer_off(*bcb)                        ; turn buffering off
+  Declare.i buffer_on(*bcb)                         ; turn buffering on
+  Declare.i write_s(*bcb, s.s)                      ; write a string to the buffer
+  Declare.i write_s_immediate(*bcb, s.s)            ; do it now
+  Declare.i write_m(*bcb, *m, length.i)             ; write a byte array to the buffer
+  Declare.i write_m_immediate(*bcb, *m, length.i)   ; do it now
+  Declare.i buffer_flush(*bcb)                      ; write the buffer
+  Declare.i buffer_clear(*bcb)                      ; clear the buffer
+  Declare.i buffer_terminate(*bcb)                  ; flush and release the buffer
 
 EndDeclareModule
 
@@ -76,7 +74,7 @@ Module bufwriter
   ; this is not threaded we could use a static global for the bcb but I prefer
   ; to allocate such things.
 
-  Procedure.i buffer_initialize(size.i=#BCB_BUF_MAX)       ; create the buffer
+  Procedure.i buffer_initialize(bufsz.i=#BCB_DEFAULT)       ; create the buffer
     Define.bcb *bcb = AllocateMemory(sizeof(bcb))
     With *bcb
       \size = size
@@ -223,4 +221,4 @@ Module bufwriter
 
 EndModule
 
-; common.pbi ends here --------------------------------------------------------
+; bufwriter.pbi ends here --------------------------------------------------------
