@@ -34,15 +34,16 @@ DeclareModule bufwriter
 
   ; ----- API -------------------------------------------------------------------
 
-  Declare.i initialize(size.i=8192)               ; create the buffer
-  Declare.i buffering_off(*bcb)                   ; turn buffering off
-  Declare.i buffering_on(*bcb)                    ; turn buffering on
+  Declare.i buffer_initialize(size.i=8192)               ; create the buffer
+  Declare.i buffer_off(*bcb)                   ; turn buffering off
+  Declare.i buffer_on(*bcb)                    ; turn buffering on
   Declare.i write_s(*bcb, s.s)                    ; write a string to the buffer
   Declare.i write_s_immediate(*bcb, s.s)          ; do it now
   Declare.i write_m(*bcb, *m, length.i)           ; write a byte array to the buffer
   Declare.i write_m_immediate(*bcb, *m, length.i) ; do it now
-  Declare.i flush(*bcb)                           ; write the buffer
-  Declare.i terminate(*bcb)                       ; flush and release the buffer
+  Declare.i buffer_flush(*bcb)                           ; write the buffer
+  Declare.i buffer_clear(*bcb)                           ; write the buffer
+  Declare.i buffer_terminate(*bcb)                       ; flush and release the buffer
 
 EndDeclareModule
 
@@ -56,9 +57,8 @@ Module bufwriter
   ;
   ; The actual buffer is hung off the bcb.
 
-  Procedure.i initialize(size.i=8192)               ; create the buffer
-    Define.bcb *bcb
-    *bcb = AllocateMemory(sizeof(bcb))
+  Procedure.i buffer_initialize(size.i=8192)               ; create the buffer
+    Define.bcb *bcb = AllocateMemory(sizeof(bcb))
     With *bcb
       \size = size
       \used = 0
@@ -74,7 +74,7 @@ Module bufwriter
   ; Any writes will be immediate, even if they don't request it. Any existing
   ; data in the buffer is untouched.
 
-  Procedure.i buffering_off(*bcb.bcb)                   ; turn buffering off
+  Procedure.i buffer_off(*bcb.bcb)                   ; turn buffering off
     *bcb\buffering = #false
   EndProcedure
 
@@ -82,7 +82,7 @@ Module bufwriter
   ;
   ; Defaults to write to buffer.
 
-  Procedure.i buffering_on(*bcb.bcb)                    ; turn buffering on
+  Procedure.i buffer_on(*bcb.bcb)                    ; turn buffering on
     *bcb\buffering = #true
   EndProcedure
 
@@ -154,7 +154,7 @@ Module bufwriter
   ; If the buffer holds data, write it and return the byte count written. Otherwise
   ; return #false.
 
-  Procedure.i flush(*bcb.bcb)                           ; write the buffer
+  Procedure.i buffer_flush(*bcb.bcb)                           ; write the buffer
     If *bcb\buf = *bcb\nxt
       ProcedureReturn #false
     EndIf
@@ -169,7 +169,7 @@ Module bufwriter
   ; Discard everything in the buffer. Returns #false if the buffer was already
   ; empty.
 
-  Procedure.i clear(*bcb.bcb)                           ; write the buffer
+  Procedure.i buffer_clear(*bcb.bcb)                           ; write the buffer
     If *bcb\buf = *bcb\nxt
       ProcedureReturn #false
     EndIf
@@ -177,13 +177,14 @@ Module bufwriter
     *bcb\used = 0
     ProcedureReturn #true
   EndProcedure
+
   ; ----- Done with the buffer --------------------------------------------------
   ;
   ; If there is any data in the buffer, flush it. Then release the buffer and bcb.
 
-  Procedure.i terminate(*bcb.bcb)                       ; flush and release the buffer
+  Procedure.i buffer_terminate(*bcb.bcb)                       ; flush and release the buffer
     If *bcb\buf <> *bcb\nxt
-      flush(*bcb)
+      buffer_flush(*bcb)
     EndIf
     FreeMemory(*bcb\buf)
     FreeMemory(*bcb)

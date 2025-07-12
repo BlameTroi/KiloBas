@@ -194,6 +194,7 @@ EndProcedure
 
 Procedure.i draw_rows()
   vt100::save_cursor
+  cursor_home()
   Define.i row
   For row = top_left\row To bottom_right\row
     vt100::erase_line
@@ -417,6 +418,7 @@ EndProcedure
 
 Procedure Mainline()
   ; Set up the terminal and identify screen areas.
+  vt100::initialize()
   vt100::get_termios(@original_termios)
   vt100::set_raw_mode(@raw_termios)
   vt100::report_screen_dimensions(@screen_size)
@@ -432,13 +434,16 @@ Procedure Mainline()
   cursor_home()
   vt100::report_cursor_position(@cursor_position)
   vt100::display_message("I", "Welcome to kilo in PureBasic!", @message_area)
+  vt100::flush()
   ; The top level mainline is really small.
   Repeat
     refresh_screen()
   Until process_key()
+  vt100::immediate()
   ; Restore the terminal to its original settings.
   ; TODO: Can I save and restore the complete screen state?
   vt100::restore_mode(@original_termios)
+  vt100::terminate()
 EndProcedure
 
 Mainline()

@@ -37,13 +37,13 @@ EnableExplicit
 
 ; ----- Include system library and local interfaces ---------------------------
 
+; ----- Exposed procedures, macros, and constants -----------------------------
+
 XIncludeFile "unistd.pbi"       ; primarily for read() and write()
 XIncludeFile "errno.pbi"        ; you never know
 XincludeFile "termios.pbi"      ; terminal control
 XIncludeFile "common.pbi"       ; my tool box
 XIncludeFile "bufwriter.pbi"    ; buffer to stdout for terminal writes
-
-; ----- Exposed procedures, macros, and constants -----------------------------
 
 DeclareModule vt100
 
@@ -51,7 +51,6 @@ DeclareModule vt100
   UseModule errno
   UseModule termios
   UseModule common
-  UseModule bufwriter
 
   ; ----- Command sequences are identified by a prefix -------------------------
   ;
@@ -206,6 +205,12 @@ DeclareModule vt100
 
   ; Primary API procedures for vt100.
 
+  Declare.i initialize()            ; basic setup, mostly for buffering
+  Declare.i immediate()             ; turn off buffering (default = on)
+  Declare.i deferred()              ; turn on buffering
+  Declare.i flush()                 ; flush anything in buffer to terminal
+  Declare.i terminate()             ; teardown
+
   Declare.i report_cursor_position(*p.tROWCOL)
   Declare.i write_string(s.s)
   Declare.i report_screen_dimensions(*p.tROWCOL)
@@ -235,8 +240,9 @@ Module vt100
 
   ; ----- Globals ---------------------------------------------------------------
   ;
-  ; So far just 
-  Define.bcb *bcb
+  ; Not much is needed here.
+
+  Global *bcb.bcb
 
   ; ----- Command sequence prefix helpers. ------------------------------------
   ;
@@ -248,48 +254,14 @@ Module vt100
   ; terminal.
 
   Procedure.i _write_csi(s.s)
-    Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
-    If *buf
-      FillMemory(*buf, Len(s) + 8, #PB_ASCII)
-      PokeA(*buf, $1b)
-      PokeA(*buf + 1, '[')
-      string_to_buffer(s, *buf + 2)
-      Define.i sent = fWRITE(1, *buf, Len(s) + 2)
-      FreeMemory(*buf)
-      If sent = Len(s) + 2
-        ProcedureReturn #true
-      Else
-        ; error on send
-        ProcedureReturn #false
-      EndIf
-    Else
-      ; A fatal error.
-      abexit("Write_CSI_Command AllocateMemory failed", Str(fERRNO()))
-      ProcedureReturn #false ; never executed
-    EndIf
+    ProcedureReturn write_s(*bcb, Chr($1b) + "[" + s)
   EndProcedure
 
   ; Apply the ESC prefix to a parameter and command string and send it to the
   ; terminal.
 
   Procedure.i _write_esc(s.s)
-    Define *buf = AllocateMemory(Len(s) + 8) ; padding for prefix
-    If *buf
-      FillMemory(*buf, Len(s) + 8, #PB_ASCII)
-      PokeA(*buf, $1b)
-      string_to_buffer(s, *buf + 1)
-      Define.i sent = fWRITE(1, *buf, Len(s) + 1)
-      If sent = Len(s) + 1
-        ProcedureReturn #true
-      Else
-        ; error on send
-        ProcedureReturn #false
-      EndIf
-    Else
-      ; A fatal error.
-      abexit("Write_ESC_Command AllocateMemory failed", Str(fERRNO()))
-      ProcedureReturn #false ; never executed
-    EndIf
+    ProcedureReturn write_s(*bcb, Chr($1b) + s)
   EndProcedure
 
   ; ----- Support code for commands as needed.
@@ -309,9 +281,11 @@ Module vt100
 
   Procedure.i report_cursor_position(*p.tROWCOL)
     ; -1,-1 indicates a failure in the DSR
+    ; todo: -- preserve and restore
     *p\row = -1
     *p\col = -1
-    If _write_csi("6n") ; DSR for CPR cursor position report 6n -> r;cR
+    Define.i x = _write_csi("6n")
+    If x                      ; DSR for CPR cursor position report 6n -> r;cR
       Define.a char
       Define.i i
       Define.s s
@@ -346,6 +320,7 @@ Module vt100
         ProcedureReturn #false
       EndIf
     Else
+      PrintN("ARG 6n") : End -1
       ; Error in DSR.
       ProcedureReturn #false
     EndIf
@@ -360,23 +335,14 @@ Module vt100
   ; allocated.
 
   Procedure.i write_string(s.s)
-    Define *buf = AllocateMemory(Len(s) + 8)
-    If *buf
-      FillMemory(*buf, Len(s) + 8, 0, #PB_ASCII)
-      string_to_buffer(s, *buf)
-      Define.i sent = fWRITE(1, *buf, Len(s))
-      Define.i err = fERRNO()
-      FreeMemory(*buf)
-      If sent = Len(s)
-        ProcedureReturn #true
-      EndIf
-      ; What error checking could be done here?
-      ProcedureReturn #false
-    Else
-      ; A fatal error.
-      abexit("Write_String AllocateMemory failed", Str(fERRNO()))
-      ProcedureReturn #false ; never executed
+    Define *p
+    *p = *bcb
+    Define.i sent = write_s(*p, s)
+    If sent = Len(s)
+      ProcedureReturn #true
     EndIf
+    ; What error checking could be done here?
+    ProcedureReturn #false
   EndProcedure
 
   ; ----- Determine screen size -------------------------------------------------
@@ -408,6 +374,8 @@ Module vt100
     erase_line
     write_string(sev + ":" + msg)
     restore_cursor
+    Define *p = *bcb
+    buffer_flush(*p)
     ; todo: handle log
     ProcedureReturn #true
   EndProcedure
@@ -454,9 +422,26 @@ Module vt100
   ; client will hold the current buffer pointer and any function that updates
   ; the buffer could return an updated pointer.
 
-  ; To be provided: I think I want most everything to write to the buffer and
-  ; require an explicit flush request. This would be a bit like building a BMS
-  ; stream.
+  Procedure.i initialize()
+    *bcb = buffer_initialize()
+    *bcb\buffering = #false
+  EndProcedure
+
+  Procedure.i immediate()
+    ; ProcedureReturn buffer_off(*bcb)
+  EndProcedure
+
+  Procedure.i deferred()
+    ; ProcedureReturn buffer_on(*bcb)
+  EndProcedure
+
+  Procedure.i flush()
+    ProcedureReturn buffer_flush(*bcb)
+  EndProcedure
+
+  Procedure.i terminate()
+    ProcedureReturn buffer_terminate(*bcb)
+  EndProcedure
 
 EndModule
 
