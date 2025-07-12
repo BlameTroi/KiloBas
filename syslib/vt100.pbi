@@ -5,9 +5,9 @@
 ; A wrapper for using VT100/ANSI terminal control sequences instead of the
 ; ubiquitus (N/PD)CURSES.
 ;
-; All of the API procedures should be referenced using the module name prefix of
-; `vt100::`. Any procedure name prefixed with an underscore (_) is meant to be
-; internal use only. I have to expose them in the module declaration as the
+; All of the API procedures should be referenced using the module name prefix
+; of `vt100::`. Any procedure name prefixed with an underscore (_) is meant to
+; be internal use only. I have to expose them in the module declaration as the
 ; mnemonic command macros use them.
 ;
 ; All procedures are declared as returning an integer even if there is no
@@ -37,8 +37,6 @@ EnableExplicit
 
 ; ----- Include system library and local interfaces ---------------------------
 
-; ----- Exposed procedures, macros, and constants -----------------------------
-
 XIncludeFile "unistd.pbi"       ; primarily for read() and write()
 XIncludeFile "errno.pbi"        ; you never know
 XincludeFile "termios.pbi"      ; terminal control
@@ -47,8 +45,6 @@ XIncludeFile "bufwriter.pbi"    ; buffer to stdout for terminal writes
 
 DeclareModule vt100
 
-  UseModule unistd
-  UseModule errno
   UseModule termios
   UseModule common
 
@@ -64,8 +60,8 @@ DeclareModule vt100
   ;
   ; COMMAND is usually a single alphabetic character (case sensitive).
   ;
-  ; There are four prefixes. I don't know why there are so many options, but
-  ; it is what is is.
+  ; There are four prefixes. I don't know why there are so many options, but it
+  ; is what is is.
   ;
   ; ESC - sequence starting with ESC (\x1B)
   ; CSI - Control Sequence Introducer: sequence starting with ESC [ or CSI (\x9B)
@@ -132,8 +128,8 @@ DeclareModule vt100
 
   ; These are DECSC and DECRC Save/Restore Cursor (7/8).
   ;
-  ; Save or Restore the Cursor's position along with the graphic rendition (SGR)
-  ; and character set (SGS).
+  ; Save or Restore the Cursor's position along with the graphic rendition
+  ; (SGR) and character set (SGS).
   ;
   ; These are paired: a DECRC should have been preceded by a DECSC.
 
@@ -156,8 +152,8 @@ DeclareModule vt100
 
   ; This is RIS Reset to Initial State (c).
   ;
-  ; The terminal is returned to its "just powered on" state. On a hardware VT100
-  ; this would also fire POST.
+  ; The terminal is returned to its "just powered on" state. On a hardware
+  ; VT100 this would also fire POST.
 
   Macro hard_reset
     vt100::_write_esc("c")
@@ -192,38 +188,43 @@ DeclareModule vt100
     vt100::_write_csi("?25h")
   EndMacro
 
-  ; ----- Read from the terminal ------------------------------------------------
-  ;
-  ; Wrap read() for terminal I/O. This isn't strictly needed and the function is
-  ; actually in unistd, but I like the consistency.
+  ; ----- Expose the API --------------------------------------------------------
 
-  Macro read_key(c)
-    fREAD(0, @c, 1)
-  EndMacro
-
-  ; ----- Expose API functions --------------------------------------------------
-
-  ; Primary API procedures for vt100.
+  ; Set up and tear down.
 
   Declare.i initialize()            ; basic setup, mostly for buffering
-  Declare.i immediate()             ; turn off buffering (default = on)
-  Declare.i deferred()              ; turn on buffering
-  Declare.i flush()                 ; flush anything in buffer to terminal
   Declare.i terminate()             ; teardown
 
-  Declare.i report_cursor_position(*p.tROWCOL)
-  Declare.i write_string(s.s)
-  Declare.i report_screen_dimensions(*p.tROWCOL)
-  Declare.i display_message(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
-
-  ; These need to be wrapped in the module and should not be called directly.
+  ; TODO: These need to be wrapped in the module and should not be called
+  ; directly.
 
   Declare.i get_termios(*p.tTERMIOS)
   Declare.i restore_mode(*p.tTERMIOS)
   Declare.i set_raw_mode(*raw.tTERMIOS)
 
-  ; These should never be directly called by the client. They are included to
-  ; support the macros that need them.
+  ; Input procedures:
+
+  Macro read_key(c)
+    fREAD(0, @c, 1)
+  EndMacro
+
+  ; Output procedures and buffering management:
+
+  Declare.i immediate()             ; turn off buffering (default = on)
+  Declare.i deferred()              ; turn on buffering
+  Declare.i flush()                 ; flush anything in buffer to terminal
+  Declare.i write_string(s.s)
+  Declare.i display_message(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
+
+  ; Terminal queries. Report screen dimensions is a special case of report
+  ; cursor position and does a bit of work before calling report cursor
+  ; position.
+
+  Declare.i report_cursor_position(*p.tROWCOL)
+  Declare.i report_screen_dimensions(*p.tROWCOL)
+
+  ; These should never be directly called by client code. They are only exposed
+  ; for use by macros. All client writes to the terminal should use write_string!
 
   Declare.i _write_csi(s.s)
   Declare.i _write_esc(s.s)
@@ -240,7 +241,7 @@ Module vt100
 
   ; ----- Globals ---------------------------------------------------------------
   ;
-  ; Not much is needed here.
+  ; So far all I keep is the *bcb.
 
   Global *bcb.bcb
 
@@ -264,9 +265,22 @@ Module vt100
     ProcedureReturn write_s(*bcb, Chr($1b) + s)
   EndProcedure
 
-  ; ----- Support code for commands as needed.
+  ; ----- Write a string to the terminal ----------------------------------------
   ;
-  ; Some comands require additional work.
+  ; To avoid any Unicode/UTF-8 issues I build a sequence of ASCII bytes.
+  ;
+  ; Returns whatever write_s returns
+
+  Procedure.i write_string(s.s)
+    ProcedureReturn write_s(*bcb, s)
+  EndProcedure
+
+  ; ----- Terminal queries. ---------------------------------------------------
+  ;
+  ; So far the only query done is to find the cursor position. Getting the
+  ; screen dimensions is a special case of finding the cursor position.
+  ;
+  ; At present these are the only two queries.
 
   ; This is DSR Device Status Report active position (6n).
   ;
@@ -284,82 +298,61 @@ Module vt100
     ; todo: -- preserve and restore
     *p\row = -1
     *p\col = -1
-    Define.i x = _write_csi("6n")
-    If x                      ; DSR for CPR cursor position report 6n -> r;cR
-      Define.a char
-      Define.i i
-      Define.s s
-      ; Read a character at a time until we do not get a character (a time out
-      ; on the wait) or the character received is the end marker for the CPR.
-      While fREAD(0, @char, 1)
-        s = s + Chr(char)
-        If char = 'R'
-          Break
-        EndIf
-      Wend
-      ; Does this appear to be a valid CPR? \e[#;#R? There is no error checking
-      ; beyond this.
-      If Len(s) >= 6 And Left(s, 1) = Chr($1b) And Right(s, 1) = "R"
-        ; Collect row (digits up to the ;).
-        *p\row = 0
-        i = 3
-        While c_is_num(Mid(s, i, 1))
-          *p\row = *p\row * 10 + Val(Mid(s, i, 1))
-          i = i + 1
-        Wend
-        ; Skip past the assumed ; and collect the column (digits up to the R).
-        *p\col = 0
-        i = i + 1
-        While c_is_num(Mid(s, i, 1))
-          *p\col = *p\col * 10 + Val(Mid(s, i, 1))
-          i = i + 1
-        Wend
-        ProcedureReturn #true
-      Else
-        ; Invalid CPR format.
-        ProcedureReturn #false
-      EndIf
-    Else
-      PrintN("ARG 6n") : End -1
-      ; Error in DSR.
+    ; Define.i x = _write_csi("6n") 
+    ; If x                      ; DSR for CPR cursor position report 6n -> r;cR 
+    If Not _write_csi("6n")     ; DSR for CPR cursor position report 6n -> r;cR
       ProcedureReturn #false
     EndIf
-  EndProcedure
-
-  ; ----- Write a string to the terminal ----------------------------------------
-  ;
-  ; To avoid any Unicode/UTF-8 issues I build a string of ASCII bytes.
-  ;
-  ; Returns #true if the message was sent correctly, #false if the send failed
-  ; (bytes sent = length to send), and aborts if buffer memory could not be
-  ; allocated.
-
-  Procedure.i write_string(s.s)
-    Define *p
-    *p = *bcb
-    Define.i sent = write_s(*p, s)
-    If sent = Len(s)
-      ProcedureReturn #true
+    Define.a char
+    Define.i i
+    Define.s s
+    ; Read a character at a time until we do not get a character (a time out
+    ; on the wait) or the character received is the end marker for the CPR.
+    While read_key(char)
+      s = s + Chr(char)
+      If char = 'R'
+        Break
+      EndIf
+    Wend
+    ; Does this appear to be a valid CPR? \e[#;#R? There is no error checking
+    ; beyond this.
+    If Len(s) < 6 Or Left(s, 1) <> Chr($1b) Or Right(s, 1) <> "R"
+      ProcedureReturn #false
     EndIf
-    ; What error checking could be done here?
-    ProcedureReturn #false
+    ; Collect row (digits up to the ;).
+    *p\row = 0
+    i = 3
+    While c_is_num(Mid(s, i, 1))
+      *p\row = *p\row * 10 + Val(Mid(s, i, 1))
+      i = i + 1
+    Wend
+    ; Skip past the assumed ; and collect the column (digits up to the R).
+    *p\col = 0
+    i = i + 1
+    While c_is_num(Mid(s, i, 1))
+      *p\col = *p\col * 10 + Val(Mid(s, i, 1))
+      i = i + 1
+    Wend
+    ProcedureReturn #true
   EndProcedure
 
-  ; ----- Determine screen size -------------------------------------------------
-  ;
   ; Report screen size using CUD/CUF and then a CPR. The cursor position is
   ; saved and restored across this operation. The behavior for CUP 999;999H is
   ; not defined, so I use CUD/CUF instead
   ;
   ; Report_Cursor_Position might report an error, but otherwise I don't check
   ; for errors.
+  ;
+  ; Due to the nature of this command its output is in immediate mode.
 
   Procedure.i report_screen_dimensions(*p.tROWCOL)
+    immediate()
     save_cursor
     _write_csi("999B") ; CUD cursor down this many
     _write_csi("999C") ; CUF cursor forward this many
     report_cursor_position(*p)
     restore_cursor
+    deferred()
     ProcedureReturn #true
   EndProcedure
 
@@ -367,6 +360,10 @@ Module vt100
   ;
   ; Display the severity and text of a message at a row/col. Optionally the
   ; message could be written to a log (from common.pbi).
+  ;
+  ; Always returns #true.
+  ;
+  ; Always flushes any buffered output.
 
   Procedure.i display_message(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
     save_cursor
@@ -374,9 +371,8 @@ Module vt100
     erase_line
     write_string(sev + ":" + msg)
     restore_cursor
-    Define *p = *bcb
-    buffer_flush(*p)
-    ; todo: handle log
+    buffer_flush(*bcb)
+    ; todo: handle logging
     ProcedureReturn #true
   EndProcedure
 
@@ -385,6 +381,9 @@ Module vt100
   ; If the client wants to restore the terminal to its configuration before it
   ; was placed in raw mode, get_termios can be used to retrieve the current
   ; TERMIOS structure prior to set_raw_mode.
+  ;
+  ; These are the only places where an error will end the program. If I can't
+  ; get or set the termios, there's no point in doing anything else.
 
   Procedure.i get_termios(*p.tTERMIOS)
     If -1 = fTCGETATTR(0, *p)
@@ -418,9 +417,16 @@ Module vt100
 
   ; ----- Buffered output -------------------------------------------------------
   ;
-  ; This is mostly for screen repaints. As the buffer may need to grow the
-  ; client will hold the current buffer pointer and any function that updates
-  ; the buffer could return an updated pointer.
+  ; All screen writes run through a buffered writer. This requires separate
+  ; initialization and termination code so I've added the appropriate
+  ; procedures to the vt100 interface. These are pass through procedures to
+  ; isolate the client program from the guts of bufwriter.
+  ;
+  ; There are already too many entry points exposed (procedures or macro
+  ; wrappers) in vt100.
+  ;
+  ; Actual terminal writes (buffered or not) are issued directly above in the
+  ; vt100 code. Reads are done via read() in unistd.
 
   Procedure.i initialize()
     *bcb = buffer_initialize()
@@ -444,7 +450,5 @@ Module vt100
   EndProcedure
 
 EndModule
-
-; There is no need for module initialization--yet.
 
 ; vt100.pbi ends here ---------------------------------------------------------
