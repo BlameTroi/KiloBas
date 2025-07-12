@@ -71,7 +71,9 @@ DeclareModule common
     col.i
   EndStructure
 
-  ; Two and three axis coordinates.
+  ; Two and three axis coordinates in the usual cartesian representation. The
+  ; y value is meant to be vertical, and x horizontal.
+
   Structure tXY
     x.i
     y.i
@@ -85,17 +87,32 @@ DeclareModule common
 
   ; ----- API -------------------------------------------------------------------
 
+  ; Abnormal termination:
+
   Declare   abexit(s.s, extra.s="", rc.i=-1)
+
+  ; Normal termination:
+  ;
+  ; I have nothing for this yet, but I want to figure out how to use at_exit()
+  ; from PureBasic.
+
+  ; Logging is not implemented yet, but here are the entry points:
 
   Declare.i oplog(fn.s="common.log")
   Declare.i cllog()
   Declare.i wtlog(sev.s, msg.s)
 
+  ; Marshaling:
+
   Declare.i string_to_buffer(s.s, *buf)
   Declare.i buffer_to_string(*buf, s.s)
 
+  ; Numeric utilities. All integer.
+
   Declare.i min(a.i, b.i)                 ; NOTE: integer!
   Declare.i max(a.i, b.i)
+
+  ; Character (as in single character in a string) predicates:
 
   Declare.i c_is_cntrl(c.s)
   Declare.i c_is_num(c.s)
@@ -105,6 +122,8 @@ DeclareModule common
   Declare.i c_is_keyword(c.s)
   Declare.i c_is_whitespace(c.s)
 
+  ; Ascii bytes (0-255 or non-stringified) character predicates:
+
   Declare.i a_is_cntrl(c.a)
   Declare.i a_is_num(c.a)
   Declare.i a_is_alpha(c.a)
@@ -112,6 +131,8 @@ DeclareModule common
   Declare.i a_is_alphanum(c.a)
   Declare.i a_is_keyword(c.a)
   Declare.i a_is_whitespace(c.a)
+
+  ; That's all so far.
 
 EndDeclareModule
 
@@ -321,7 +342,5 @@ Module common
   ; ----- Doubtless there will be more ----------------------------------------
 
 EndModule
-
-; There is no need for module initialization--yet.
 
 ; common.pbi ends here --------------------------------------------------------

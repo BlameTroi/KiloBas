@@ -399,13 +399,25 @@ Module vt100
     ProcedureReturn #true
   EndProcedure
 
+  ; cfmakeraw does the following, review differences.
+  ;
+  ; termios_p->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
+  ;         not in kilo---v---^--v------------v--^
+  ;                 | INLCR | IGNCR | ICRNL | IXON);
+  ;         missing ISTRIP --^
+  ; termios_p->c_oflag &= ~OPOST;
+  ; termios_p->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+  ;                                ^--------- not in kilo
+  ; termios_p->c_cflag &= ~(CSIZE | PARENB); <-------- this is not in kilo
+  ; termios_p->c_cflag |= CS8;
+
   Procedure.i set_raw_mode(*raw.tTERMIOS)
     get_termios(*raw)
     With *raw
       \c_iflag = \c_iflag & ~(#BRKINT | #ICRNL | #INPCK | #ISTRIP | #IXON)
       \c_oflag = \c_oflag & ~(#OPOST)
-      \c_cflag = \c_cflag | (#CS8)
       \c_lflag = \c_lflag & ~(#ECHO | #ICANON | #IEXTEN | #ISIG)
+      \c_cflag = \c_cflag | (#CS8)
       \c_cc[#VMIN] = 0       ; min number of bytes to return from read
       \c_cc[#VTIME] = 1      ; timeout in read (1/10 second)
     EndWith
