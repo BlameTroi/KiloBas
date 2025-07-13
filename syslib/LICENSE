@@ -1,0 +1,5 @@
+My software is always copyright me and then released to the public domain. As this is a WIP I don't have this file written up properly.
+
+The system includes I port to PureBasic all have licenses from Apple/OpenBSD/Gnu and so on.
+
+These library includes were created as part of a project to implement a version of the Kilo editor in PureBasic. I don't believe any of the code in these files is directly attributable to code in Kilo, and Kilo rights are addressed in the KiloBas project.

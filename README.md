@@ -1,10 +1,10 @@
 # KiloBas
 
-A PureBasic pass through the Kilo "editor in 1k lines of C" tutorial at [Snaptoken](https://viewsourcecode.org/snaptoken/kilo/), which is based on code by [`antirez`](https://antirez.com/news/108).
+A PureBasic pass through the Kilo "editor in 1k lines of C" tutorial at [`Snaptoken`](https://viewsourcecode.org/snaptoken/kilo/), which is based on code by [`antirez`](https://antirez.com/news/108).
 
 ## Status
 
-This is a work in progress. It is likely broken most of the time. I'm using it as a project to learn more about PureBasic. There's nothing new here other than some PureBasic include files for various `libc` functions.
+This is a work in progress. It is likely broken most of the time. I'm using it as a project to learn more about PureBasic. There's nothing new here other than some PureBasic modules as include files for both needed `libc` functions and my own ever growing personal standard library.
 
 ## About libc
 

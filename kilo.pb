@@ -91,26 +91,26 @@
 
 EnableExplicit
 
-; ----- Include system library interfaces -------------------------------------
+; ----- Using a module just because I prefer to -------------------------------
 ;
-; I'm unclear on how to best set the include path. Here I'm assuming that the
-; libraries are in a sub directory of this project. When these reference each
-; other they do not specify a directory. This works as I want it to so I'm not
-; planning to use `IncludePath`.
-
-XIncludeFile "syslib/errno.pbi"   ; the errors and how to decode them
-XIncludeFile "syslib/termios.pbi" ; the termios structure, defines
-XIncludeFile "syslib/unistd.pbi" ; The parts I need.
-XIncludeFile "syslib/common.pbi" ; common macros, constants, and procedures
-XIncludeFile "syslib/vt100.pbi"  ; VT100/ANSI terminal control API - no UseModule
+; This top level program doesn't strictly need to be in a module, but I like the
+; consistency. The only thing in the declaration is the mainline.
 
 DeclareModule kilo
   Declare Mainline()
 EndDeclareModule
 
+; ----- Include system library interfaces -------------------------------------
+
+XIncludeFile "syslib/errno.pbi"   ; The errors and how to decode them.
+XIncludeFile "syslib/unistd.pbi"  ; The parts I need.
+XIncludeFile "syslib/common.pbi"  ; Common macros, constants, and procedures.
+XIncludeFile "syslib/vt100.pbi"   ; VT100/ANSI terminal control API - no UseModule.
+
+; ----- The actual module definition ------------------------------------------
+
 Module kilo
   UseModule errno
-  UseModule termios
   UseModule unistd
   UseModule common
 
@@ -124,8 +124,6 @@ Module kilo
   Global.tROWCOL   message_area       ; start of message output area
   Global.tROWCOL   top_left           ; bounds of the editable region
   Global.tROWCOL   bottom_right       ; NW corner, SE corner
-  Global.tTERMIOS  original_termios   ; saved to restore at exit
-  Global.tTERMIOS  raw_termios        ; not really used after set, kept for reference
 
   ; ----- Common error exit -----------------------------------------------------
   ;
@@ -142,7 +140,8 @@ Module kilo
     #HOME_KEY
     #END_KEY
   EndEnumeration
-  ; The read_key routine can return an error code if needed, but for now that is
+
+  ; The Read_Key routine can return an error code if needed, but for now that is
   ; just treated as if the user pressed ESC.
   #BAD_SEQUENCE_READ = #ESCAPE
 
@@ -155,7 +154,7 @@ Module kilo
   ; procedure calls. This parameter ordering puts the values that might be
   ; overridden at the front of the list.
 
-  Procedure abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
+  Procedure Abort(s.s, extra.s="", erase.i=#true, reset.i=#false, rc.i=-1)
     If erase
       vt100::erase_screen
       vt100::cursor_home
@@ -174,7 +173,7 @@ Module kilo
   ;
   ; I might try to switch to a format more like that of XEdit in CMS.
 
-  Procedure.i move_cursor(c.i)
+  Procedure.i Move_Cursor(c.i)
     With cursor_position
       Select c
         Case #ARROW_UP               ; N
@@ -194,13 +193,13 @@ Module kilo
     EndWith
   EndProcedure
 
-  Procedure.i cursor_home()
+  Procedure.i Editor_Cursor_Home()
     vt100::cursor_position(top_left\row, top_left\col)
   EndProcedure
 
-  Procedure.i draw_rows()
+  Procedure.i Draw_Rows()
     vt100::save_cursor
-    cursor_home()
+    Editor_Cursor_Home()
     Define.i row
     For row = top_left\row To bottom_right\row
       vt100::erase_line
@@ -210,10 +209,10 @@ Module kilo
     vt100::restore_cursor
   EndProcedure
 
-  Procedure.i refresh_screen()
+  Procedure.i Refresh_Screen()
     vt100::cursor_hide
-    cursor_home()
-    draw_rows()
+    Editor_Cursor_Home()
+    Draw_Rows()
     vt100::cursor_position(cursor_position\row, cursor_position\col)
     vt100::cursor_show
   EndProcedure
@@ -226,7 +225,7 @@ Module kilo
 
   Global Dim keypress_buffer.a(32)
 
-  Procedure.i read_key()
+  Procedure.i Read_Key()
     Define.i n, e
     For n = 0 To 31
       keypress_buffer(n) = 0
@@ -238,7 +237,7 @@ Module kilo
       If n = -1
         e = fERRNO()
         If e <> #EAGAIN
-          Abort("Editor_Read_key", Str(e))
+          Abort("Editor_Read_Key", Str(e))
         Else
           n = 0
         EndIf
@@ -327,9 +326,9 @@ Module kilo
     ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
   EndProcedure
 
-  ; ----- Display the keypress buffer as built in read_key ----------------------
+  ; ----- Display the keypress buffer as built in Read_Key ----------------------
   ;
-  ; The keypress_buffer is a 32 byte nil terminated ASCII byte array. `read_key`
+  ; The keypress_buffer is a 32 byte nil terminated ASCII byte array. `Read_Key`
   ; stores the current keypress there. Many keys result in only one byte stored,
   ; say for an alphabetic letter, but longer sequences are possible when using
   ; special keys such as up or down error.
@@ -337,7 +336,7 @@ Module kilo
   ; Build a human readable representation of the buffer and display it. This was
   ; initally for debugging but it may become a permanent feature.
 
-  Procedure display_keypress_buffer()
+  Procedure Display_Keypress_Buffer()
     vt100::save_cursor
     Define.s s = "key: "
     Define.i i
@@ -366,15 +365,15 @@ Module kilo
   ; Route control based on mode and key. Try to keep any one Case clause
   ; short--use Procedures when appropriate.
   ;
-  ; A "key" returned from read_key might represent a multi-byte ANSI sequence. If
+  ; A "key" returned from Read_Key might represent a multi-byte ANSI sequence. If
   ; so, it is mapped to some value from the kilo_keys enumeration. That
   ; enumeration starts from 1000.
   ;
   ; This procedure returns #true when the user requests that the session end.
 
-  Procedure.i process_key()
-    Define.i c = read_key()
-    display_keypress_buffer()
+  Procedure.i Process_Key()
+    Define.i c = Read_Key()
+    Display_Keypress_Buffer()
     Select c
       Case #CTRL_D ; display screen size.
         Define.tROWCOL p
@@ -387,25 +386,25 @@ Module kilo
       Case #CTRL_Q ; quit program
         vt100::cursor_position(10, 1)
         ProcedureReturn #true
-      Case #CTRL_A ; force an run through the abort path
+      Case #CTRL_A ; force an run through the Abort path
         vt100::save_cursor
         vt100::cursor_position(5, 8)
         vt100::write_string("Game Over Man!!!")
         vt100::restore_cursor
         Delay(2500)
-        abort("You forced an abort", "", #false, #true, -1)
+        Abort("You forced an abort", "", #false, #true, -1)
       Case #ARROW_UP, #ARROW_RIGHT, #ARROW_DOWN, #ARROW_LEFT
-        display_keypress_buffer()
-        move_cursor(c)
+        Display_Keypress_Buffer()
+        Move_Cursor(c)
       Case #PAGE_UP
         Define.i i
         For i = top_left\row To bottom_right\row
-          move_cursor(#ARROW_UP)
+          Move_Cursor(#ARROW_UP)
         Next i
       Case #PAGE_DOWN
         Define.i i
         For i = top_left\row To bottom_right\row
-          move_cursor(#ARROW_DOWN)
+          Move_Cursor(#ARROW_DOWN)
         Next i
       Case #HOME_KEY
         cursor_position = top_left
@@ -445,7 +444,7 @@ Module kilo
 
   Procedure Greet_or_Load_File()
     vt100::erase_screen
-    cursor_home()
+    Editor_Cursor_Home()
     vt100::report_cursor_position(@cursor_position)
     vt100::display_message("I", "Welcome to kilo in PureBasic!", @message_area)
     vt100::flush()
@@ -455,8 +454,8 @@ Module kilo
 
   Procedure Editor_Loop()
     Repeat
-      refresh_screen()
-    Until process_key()
+      Refresh_Screen()
+    Until Process_Key()
     vt100::immediate()
   EndProcedure
 
