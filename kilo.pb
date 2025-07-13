@@ -129,7 +129,7 @@ Module kilo
   ;
   ; ANSI key sequences are mapped into meaningful integer values.
 
-  Enumeration kilo_keys 1000
+  Enumeration Kilo_Keys 1000
     #ARROW_UP
     #ARROW_DOWN
     #ARROW_RIGHT
@@ -166,10 +166,15 @@ Module kilo
     abexit(s, extra, rc)
   EndProcedure
 
-  ; ----- Controlling the presentation ------------------------------------------
+  ; ----- UI move the cursor based on keyboard input ----------------------------
   ;
   ; The screen display is superficially vi like. The top and bottom two rows
   ; are reserved. As in vi, empty lines are flagged with a tilde (~).
+  ;
+  ; Keep the within the edit area's bounds.
+  ;
+  ; Any key sequence that can move the cursor is mapped to one of these four
+  ; possibiities.
   ;
   ; I might try to switch to a format more like that of XEdit in CMS.
 
@@ -193,25 +198,46 @@ Module kilo
     EndWith
   EndProcedure
 
+  ; ----- UI home the cursor ----------------------------------------------------
+  ;
+  ; The physical screen homes to 1,1 but in the editor home means top left of
+  ; the editable area. That may be changed to command entry area a la XEdit,
+  ; but I haven't decided yet.
+
   Procedure.i Editor_Cursor_Home()
     vt100::cursor_position(top_left\row, top_left\col)
   EndProcedure
+
+  ; ----- UI display rows of text in the editable area --------------------------
+  ;
+  ; Refresh the editable area while preserving the user's cursor position.
+  ; Empty rows will have the conventional Vi tilde (~) on the left margin. 
 
   Procedure.i Draw_Rows()
     vt100::save_cursor
     Editor_Cursor_Home()
     Define.i row
     For row = top_left\row To bottom_right\row
+      vt100::cursor_position(row, top_left\col)
       vt100::erase_line
+      ; TODO: should this clip to the region?
       vt100::write_string(~"~")
-      vt100::write_string(~"\r\n")
     Next row
     vt100::restore_cursor
   EndProcedure
 
+  ; Procedure.i Draw_Frame() <- to be provided
+
+  ; ----- UI refresh the entire display -----------------------------------------
+  ;
+  ; The screen consists of a frame holding information about the current edit
+  ; session and state. Inside this there is the edit 'window' or view of the
+  ; current file.
+
   Procedure.i Refresh_Screen()
     vt100::cursor_hide
-    Editor_Cursor_Home()
+    ; I don't think I need this here Editor_Cursor_Home()
+    ; Draw_Frame() <- to be written
     Draw_Rows()
     vt100::cursor_position(cursor_position\row, cursor_position\col)
     vt100::cursor_show
@@ -219,21 +245,47 @@ Module kilo
 
   ; ----- Read a key press and return it one byte at a time ---------------------
   ;
-  ; On macOS read doesn't mark no input as a hard error so check for nothing read
-  ; and handle as if we got an error return flagged #EAGAIN. Proper handling
-  ; of things such as PF keys is still to do.
+  ; Translate bytes read from the terminal into a usable format. Normal
+  ; characters are received as a single byte. Special purpose keys are received
+  ; as a multi-byte sequence starting with an ESC.
+  ;
+  ; This is the main "event" that can be recieved by this program. Most of the
+  ; time spent in this program will be in the repeat lt the head of this
+  ; procedure.
+  ;
+  ; If a character is read and it is not ESC pass it on.
+  ;
+  ; If an ESC is read, it could be either a real ESC keyed by the user or the
+  ; start of a sequence to read and decode.
+  ;
+  ; The terminal should provide the full sequence at once so subsequent reads
+  ; will quickly get the rest of the sequence. If the sequence is recognized as
+  ; having an end marker, read until that is received. Otherwise read until no
+  ; key is returned. While it is possible that a user keypress follows the
+  ; sequence with no time gap, the odds are astronomically small (really). The
+  ; read timeout is set to 1/10 of a second by default.
+  ;
+  ; Once we have read the full sequence, translate it into a single numeric
+  ; value. See the enumeration Kilo_Keys for the supported sequence
+  ; translations. These are assigned a value well above the highest possible
+  ; ASCII character code. Unicode/UTF-8 is not supported in multibyte formats.
+  ;
+  ; The full sequence read is stored in a global 32 byte buffer. This is
+  ; displayed elsewhere for information and debugging.
+  ;
+  ; A note on the read/spin error handling: On macOS read doesn't mark no input
+  ; as a hard error so check for nothing read and handle as if we got an error
+  ; return flagged #EAGAIN.
 
-  Global Dim keypress_buffer.a(32)
+  Global Dim Keypress_Buffer.a(32)
 
   Procedure.i Read_Key()
     Define.i n, e
-    For n = 0 To 31
-      keypress_buffer(n) = 0
-    Next n
     ; Spin until we get some sort of key. It might be a plain textual key or
     ; the start of an ANSI sequence.
+    FillMemory(@Keypress_Buffer(0), 32)
     Repeat
-      n = vt100::read_key(keypress_buffer(0))
+      n = vt100::read_key(Keypress_Buffer(0))
       If n = -1
         e = fERRNO()
         If e <> #EAGAIN
@@ -244,12 +296,12 @@ Module kilo
       EndIf
     Until n<>0
     ; If the key is not ESC, it can be returned straight away.
-    If keypress_buffer(0) <> #ESCAPE
+    If Keypress_Buffer(0) <> #ESCAPE
       ; There's the Delete key and FN Delete. FN Delete comes through as ESC 3 ~.
-      If keypress_buffer(0) = #DELETE
+      If Keypress_Buffer(0) = #DELETE
         ProcedureReturn #DEL_KEY
       EndIf
-      ProcedureReturn keypress_buffer(0)
+      ProcedureReturn Keypress_Buffer(0)
     EndIf
     ; Collect the rest of the sequence. If the next read times out then the user
     ; actually pressed ESC. No error checking is done. If one occurs it will be
@@ -259,40 +311,44 @@ Module kilo
     ; We need to read at least three bytes to identify a sequence, and more may
     ; be needed. Read the next two bytes and if there is an error/time out, just
     ; return an ESC.
-    n = vt100::read_key(keypress_buffer(1))
+    n = vt100::read_key(Keypress_Buffer(1))
     If n <> 1
       ProcedureReturn #ESCAPE
     EndIf
-    n = vt100::read_key(keypress_buffer(2))
+    n = vt100::read_key(Keypress_Buffer(2))
     If n <> 1
       ProcedureReturn #BAD_SEQUENCE_READ
     EndIf
     ; If first byte is ESC, further filter on second byte. So far sequences
     ; prefixed by ESC [ and ESC O are supported.
-    If keypress_buffer(1) = '['
+    If Keypress_Buffer(1) = '['
       ; Numererics are followed by a tilde (~) requiring a fourth byte to complete
       ; the sequence.
-      If keypress_buffer(2) >= '0' and keypress_buffer(2) <= '9'
-        n = vt100::read_key(keypress_buffer(3))
-        If n <> 1 Or keypress_buffer(3) <> '~'
+      If Keypress_Buffer(2) >= '0' and keypress_buffer(2) <= '9'
+        n = vt100::read_key(Keypress_Buffer(3))
+        If n <> 1 Or Keypress_Buffer(3) <> '~'
           ProcedureReturn #BAD_SEQUENCE_READ
         EndIf
-        Select keypress_buffer(2)
-          Case '1', '7'
-            ProcedureReturn #HOME_KEY
+        Select Keypress_Buffer(2)
+          Case '1'
+            ProcedureReturn #HOME_KEY       ; also 7
           Case '3'
             ProcedureReturn #DEL_KEY
-          Case '4', '8'
-            ProcedureReturn #END_KEY
+          Case '4'
+            ProcedureReturn #END_KEY        ; also 8
           Case '5'
             ProcedureReturn #PAGE_UP
           Case '6'
             ProcedureReturn #PAGE_DOWN
+          Case '7'
+            ProcedureReturn #HOME_KEY      ; also 1
+          Case '8'
+            ProcedureReturn #END_KEY       ; also 4
           Default
             ProcedureReturn #BAD_SEQUENCE_READ
         EndSelect
       Else
-        Select keypress_buffer(2)
+        Select Keypress_Buffer(2)
           Case 'A'
             ProcedureReturn #ARROW_UP
           Case 'B'
@@ -310,8 +366,8 @@ Module kilo
         EndSelect
       EndIf
       ProcedureReturn #BAD_SEQUENCE_READ ; should never get here
-    ElseIf keypress_buffer(1) = 'O' ; upper case 'o'
-      Select keypress_buffer(2)
+    ElseIf Keypress_Buffer(1) = 'O' ; upper case 'o'
+      Select Keypress_Buffer(2)
         Case 'H'
           ProcedureReturn #HOME_KEY
         Case 'F'
@@ -328,7 +384,7 @@ Module kilo
 
   ; ----- Display the keypress buffer as built in Read_Key ----------------------
   ;
-  ; The keypress_buffer is a 32 byte nil terminated ASCII byte array. `Read_Key`
+  ; The Keypress_Buffer is a 32 byte nil terminated ASCII byte array. `Read_Key`
   ; stores the current keypress there. Many keys result in only one byte stored,
   ; say for an alphabetic letter, but longer sequences are possible when using
   ; special keys such as up or down error.
@@ -340,17 +396,17 @@ Module kilo
     vt100::save_cursor
     Define.s s = "key: "
     Define.i i
-    While keypress_buffer(i)
-      If keypress_buffer(i) = #ESCAPE
+    While Keypress_Buffer(i)
+      If Keypress_Buffer(i) = #ESCAPE
         s = s + "ESC "
-      ElseIf keypress_buffer(i) = ' '
+      ElseIf Keypress_Buffer(i) = ' '
         s = s + "SPC "
-      ElseIf keypress_buffer(i) < ' '
-        s = s + "^" + Chr('A' + keypress_buffer(i) - 1) + " "
-      ElseIf keypress_buffer(i) = #DELETE
+      ElseIf Keypress_Buffer(i) < ' '
+        s = s + "^" + Chr('A' + Keypress_Buffer(i) - 1) + " "
+      ElseIf Keypress_Buffer(i) = #DELETE
         s = s + "DEL "
       Else
-        s = s + Chr(keypress_buffer(i)) + " "
+        s = s + Chr(Keypress_Buffer(i)) + " "
       EndIf
       i = i + 1
     Wend
