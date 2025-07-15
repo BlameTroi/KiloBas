@@ -116,14 +116,30 @@ Module kilo
 
   ; ----- Common or global data -------------------------------------------------
   ;
-  ; This could be collected into a `context` structure that is dynamically
-  ; allocated, but at this stage of development global variables suffice.
+  ; Originally these were just lone global variables but I've moved them into
+  ; a structure the tutorial calls "editorconfig" (not THAT editorconfig) to be
+  ; more in synch with its code.
+  ;
+  ; This is a purely cosmetic change that is probably more trouble than it's
+  ; worth.
 
-  Global.tROWCOL   cursor_position    ; current position
-  Global.tROWCOL   screen_size        ; dimensions of physical screen
-  Global.tROWCOL   message_area       ; start of message output area
-  Global.tROWCOL   top_left           ; bounds of the editable region
-  Global.tROWCOL   bottom_right       ; NW corner, SE corner
+  Structure erow
+    size.i
+    *char                      ; is there a better way to deal with a C string?
+  EndStructure
+
+  Structure econfig
+    ; screen geometry
+    cursor_position.tROWCOL    ; current position
+    screen_size.tROWCOL        ; dimensions of physical screen
+    message_area.tROWCOL       ; start of message output area
+    top_left.tROWCOL           ; bounds of the editable region
+    bottom_right.tROWCOL       ; NW corner, SE corner
+    ; display data
+    row.erow                   ; initially just one row
+  EndStructure
+
+  Global.econfig E             ; to address
 
   ; ----- Common error exit -----------------------------------------------------
   ;
@@ -179,7 +195,7 @@ Module kilo
   ; I might try to switch to a format more like that of XEdit in CMS.
 
   Procedure.i Move_Cursor(c.i)
-    With cursor_position
+    With E\cursor_position
       Select c
         Case #ARROW_UP               ; N
           \row = \row - 1
@@ -191,10 +207,10 @@ Module kilo
           \col = \col - 1
       EndSelect
       ; Keep the cursor in bounds.
-      \row = max(\row, top_left\row)
-      \row = min(\row, bottom_right\row)
-      \col = max(\col, top_left\col)
-      \col = min(\col, bottom_right\col)
+      \row = max(\row, E\top_left\row)
+      \row = min(\row, E\bottom_right\row)
+      \col = max(\col, E\top_left\col)
+      \col = min(\col, E\bottom_right\col)
     EndWith
   EndProcedure
 
@@ -205,7 +221,9 @@ Module kilo
   ; but I haven't decided yet.
 
   Procedure.i Editor_Cursor_Home()
-    vt100::cursor_position(top_left\row, top_left\col)
+    With E\top_left
+      vt100::cursor_position(\row, \col)
+    EndWith
   EndProcedure
 
   ; ----- UI display rows of text in the editable area --------------------------
@@ -217,8 +235,8 @@ Module kilo
     vt100::save_cursor
     Editor_Cursor_Home()
     Define.i row
-    For row = top_left\row To bottom_right\row
-      vt100::cursor_position(row, top_left\col)
+    For row = E\top_left\row To E\bottom_right\row
+      vt100::cursor_position(row, E\top_left\col)
       vt100::erase_line
       ; TODO: should this clip to the region?
       vt100::write_string(~"~")
@@ -239,7 +257,7 @@ Module kilo
     ; I don't think I need this here Editor_Cursor_Home()
     ; Draw_Frame() <- to be written
     Draw_Rows()
-    vt100::cursor_position(cursor_position\row, cursor_position\col)
+    vt100::cursor_position(E\cursor_position\row, E\cursor_position\col)
     vt100::cursor_show
   EndProcedure
 
@@ -280,16 +298,16 @@ Module kilo
   Global Dim Keypress_Buffer.a(32)
 
   Procedure.i Read_Key()
-    Define.i n, e
+    Define.i n, err
     ; Spin until we get some sort of key. It might be a plain textual key or
     ; the start of an ANSI sequence.
     FillMemory(@Keypress_Buffer(0), 32)
     Repeat
       n = vt100::read_key(Keypress_Buffer(0))
       If n = -1
-        e = fERRNO()
-        If e <> #EAGAIN
-          Abort("Editor_Read_Key", Str(e))
+        err = fERRNO()
+        If err <> #EAGAIN
+          Abort("Editor_Read_Key", Str(err))
         Else
           n = 0
         EndIf
@@ -411,7 +429,7 @@ Module kilo
       i = i + 1
     Wend
     Define.tROWCOL p
-    vt100::cursor_position(top_left\row - 1, top_left\col + 20)
+    vt100::cursor_position(E\top_left\row - 1, E\top_left\col + 20)
     vt100::write_string(s + "              ")
     vt100::restore_cursor
   EndProcedure
@@ -434,11 +452,11 @@ Module kilo
       Case #CTRL_D ; display screen size.
         Define.tROWCOL p
         vt100::report_screen_dimensions(@p)
-        vt100::display_message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col), @message_area)
+        vt100::display_message("I", "Screen size: " + Str(p\row) + " x " + Str(p\col), @E\message_area)
       Case #CTRL_P ; display current cursor position
         Define.tROWCOL p
         vt100::report_cursor_position(@p)
-        vt100::display_message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col), @message_area)
+        vt100::display_message("I", "Cursor position: " + Str(p\row) + " x " + Str(p\col), @E\message_area)
       Case #CTRL_Q ; quit program
         vt100::cursor_position(10, 1)
         ProcedureReturn #true
@@ -454,19 +472,19 @@ Module kilo
         Move_Cursor(c)
       Case #PAGE_UP
         Define.i i
-        For i = top_left\row To bottom_right\row
+        For i = E\top_left\row To E\bottom_right\row
           Move_Cursor(#ARROW_UP)
         Next i
       Case #PAGE_DOWN
         Define.i i
-        For i = top_left\row To bottom_right\row
+        For i = E\top_left\row To E\bottom_right\row
           Move_Cursor(#ARROW_DOWN)
         Next i
       Case #HOME_KEY
-        cursor_position = top_left
+        E\cursor_position = E\top_left
       Case #END_KEY
-        cursor_position = bottom_right
-        cursor_position\col = top_left\col
+        E\cursor_position = E\bottom_right
+        E\cursor_position\col = E\top_left\col
       Default
         ; To be provided
     EndSelect
@@ -485,14 +503,14 @@ Module kilo
   ; areas.
 
   Procedure Analyze_Geometry()
-    vt100::report_screen_dimensions(@screen_size)
-    message_area = screen_size
-    message_area\col = 1
-    message_area\row = message_area\row - 1
-    top_left\row = 3
-    top_left\col = 1
-    bottom_right = screen_size
-    bottom_right\row = bottom_right\row - 3
+    vt100::report_screen_dimensions(@E\screen_size)
+    E\message_area = E\screen_size
+    E\message_area\col = 1
+    E\message_area\row = E\message_area\row - 1
+    E\top_left\row = 3
+    E\top_left\col = 1
+    E\bottom_right = E\screen_size
+    E\bottom_right\row = E\bottom_right\row - 3
   EndProcedure
 
   ; Either greet the user with an empty editor or load in a single file named
@@ -501,8 +519,8 @@ Module kilo
   Procedure Greet_or_Load_File()
     vt100::erase_screen
     Editor_Cursor_Home()
-    vt100::report_cursor_position(@cursor_position)
-    vt100::display_message("I", "Welcome to kilo in PureBasic!", @message_area)
+    vt100::report_cursor_position(@E\cursor_position)
+    vt100::display_message("I", "Welcome to kilo in PureBasic!", @E\message_area)
     vt100::flush()
   EndProcedure
 
