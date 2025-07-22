@@ -89,23 +89,21 @@ DeclareModule common
 
   ; Abnormal termination:
 
-  Declare   abexit(s.s, extra.s="", rc.i=-1)
+  Declare   abexit(s.s, extra.s="", rc.i=-1, *lcb=0)
 
   ; Normal termination:
   ;
   ; I have nothing for this yet, but I want to figure out how to use at_exit()
   ; from PureBasic.
 
-  ; Logging is not implemented yet, but here are the entry points:
-
-  Declare.i oplog(fn.s="common.log")
-  Declare.i cllog()
-  Declare.i wtlog(sev.s, msg.s)
-
   ; Marshaling:
 
   Declare.i string_to_buffer(s.s, *buf)
   Declare.i buffer_to_string(*buf, s.s)
+
+  ; Escaping:
+
+  Declare.s clean_string(s.s, length.i=0)  ; escape non displayables
 
   ; Numeric utilities. All integer.
 
@@ -132,6 +130,10 @@ DeclareModule common
   Declare.i a_is_keyword(c.a)
   Declare.i a_is_whitespace(c.a)
 
+  ; String Utilities:
+
+  Declare.s clean_string(s.s, maxlen.i=0)
+
   ; That's all so far.
 
 EndDeclareModule
@@ -142,32 +144,13 @@ Module common
   ;
   ; This really should write to stderr. And also the log if one is opened.
 
-  Procedure abexit(s.s, extra.s="", rc.i=-1)
+  Procedure abexit(s.s, extra.s="", rc.i=-1, *lcb=0)
     PrintN("")
     PrintN("")
     PrintN(s.s)
     PrintN(extra)
     End rc
   Endprocedure
-
-  ; ----- Logging ---------------------------------------------------------------
-  ;
-  ; Open, write to, and close procedures for a simple text log file.
-
-  Procedure.i oplog(fn.s="common.log")
-    ; not implemented yet
-    ProcedureReturn #false
-  EndProcedure
-
-  Procedure.i cllog()
-    ; not implemented yet
-    ProcedureReturn #false
-  EndProcedure
-
-  Procedure.i wtlog(sev.s, msg.s)
-    ; not implemented yet
-    ProcedureReturn #false
-  EndProcedure
 
   ; ----- Copy a native string into a C string and back -------------------------
   ;
@@ -196,6 +179,35 @@ Module common
       *ptr = *ptr + 1
     Wend
     ProcedureReturn #true
+  EndProcedure
+
+  ; ----- Clean up string so non-printables are escaped -----------------------
+
+  ; This needs more work. It cleans up a string for display in a log or message
+  ; by:
+  ;
+  ; - Escaping non-printables
+  ;
+  ; - Supports a maximum length and ellipsifies the string if that length is
+  ;   exceeded.
+  ;
+  ; - Enclosing the result in single quotes.
+  ;
+  ; Right now I'm just hitting leading ESC as those are used in VT100/ANSI mode.
+
+  Procedure.s clean_string(s.s, maxlen.i=0)
+    Define.s c
+    If Left(s, 1) = Chr($1b)
+      c = "\e" + Right(s, Len(s) - 1)
+    Else
+      c = s
+    EndIf
+    If maxlen > 10
+      If Len(c) > length - 3
+        c = Left(c, length - 3) + "..."
+      EndIf
+    EndIf
+    ProcedureReturn "'" + c + "'"
   EndProcedure
 
   ; ----- Missing integer functions ---------------------------------------------

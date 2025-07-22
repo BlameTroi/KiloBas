@@ -27,8 +27,8 @@ DeclareModule bufwriter
 
   #BCB_DEFAULT = 4096     ; buffer size
   Structure bcb
-    size.i                ; bytes allocated
-    used.i                ; bytes used
+    bufsize.i            ; bytes allocated
+    bufused.i             ; bytes used
     *buf                  ; the buffer
     *nxt                  ; next available in buffer
     buffering.i           ; are we?
@@ -74,11 +74,11 @@ Module bufwriter
   ; this is not threaded we could use a static global for the bcb but I prefer
   ; to allocate such things.
 
-  Procedure.i buffer_initialize(bufsz.i=#BCB_DEFAULT)       ; create the buffer
+  Procedure.i buffer_initialize(bufsize.i=#BCB_DEFAULT)       ; create the buffer
     Define.bcb *bcb = AllocateMemory(sizeof(bcb))
     With *bcb
-      \size = size
-      \used = 0
+      \bufsize = bufsize
+      \bufused = 0
       \buf = AllocateMemory(size)
       \nxt = \buf
       \buffering = #true
@@ -114,12 +114,12 @@ Module bufwriter
   Procedure.i write_s(*bcb.bcb, s.s)              ; write a string to the buffer
     If *bcb\buffering
       With *bcb
-        If Len(s) + 1 + \used >= \size
+        If Len(s) + 1 + \bufused >= \bufsize
           ProcedureReturn #false
         EndIf
         string_to_buffer(s, \nxt)
         \nxt = \nxt + Len(s)
-        \used = \used + Len(s)
+        \bufused = \bufused + Len(s)
       EndWith
       ProcedureReturn #true
     Else
@@ -148,12 +148,12 @@ Module bufwriter
   Procedure.i write_m(*bcb.bcb, *m, length.i)    ; write a byte array to the buffer
     if *bcb\buffering
       With *bcb
-        If length + 1 + \used >= \size
+        If length + 1 + \bufused >= \bufsize
           ProcedureReturn #false
         EndIf
         CopyMemory(\nxt, *m, length)
         \nxt = \nxt + length
-        \used = \used + length
+        \bufused = \bufused + length
       EndWith
       ProcedureReturn #true
     Else
@@ -180,9 +180,9 @@ Module bufwriter
       If \buf = \nxt
         ProcedureReturn #false
       EndIf
-      fWRITE(1, \buf, \used)
+      fWRITE(1, \buf, \bufused)
       \nxt = \buf
-      \used = 0
+      \bufused = 0
     EndWith
     ProcedureReturn #true
   EndProcedure
@@ -198,7 +198,7 @@ Module bufwriter
         ProcedureReturn #false
       EndIf
       \nxt = \buf
-      \used = 0
+      \bufused = 0
     EndWith
     ProcedureReturn #true
   EndProcedure
