@@ -41,9 +41,10 @@ XIncludeFile "unistd.pbi"       ; primarily for read() and write()
 XIncludeFile "errno.pbi"        ; you never know
 XincludeFile "termios.pbi"      ; terminal control
 XIncludeFile "common.pbi"       ; my tool box
-XIncludeFile "bufwriter.pbi"    ; buffer to stdout for terminal writes
+XIncludeFile "logger.pbi"       ; logging
 
 DeclareModule vt100
+  EnableExplicit
 
   UseModule termios
   UseModule common
@@ -192,9 +193,8 @@ DeclareModule vt100
 
   ; Set up and tear down.
 
-  Declare.i initialize(bufsz.i=4096, raw.i=#true)    ; basic setup, mostly for buffering
-  Declare.i terminate()                          ; teardown
-
+  Declare.i initialize(raw.i=#true, logging.i=#true)   ; basic setup
+  Declare.i terminate()                            ; teardown
 
   ; Input procedures:
 
@@ -202,11 +202,9 @@ DeclareModule vt100
     fREAD(0, @c, 1)
   EndMacro
 
-  ; Output procedures and buffering management:
+  ; Output procedures
 
-  Declare.i immediate()             ; turn off buffering (default = on)
-  Declare.i deferred()              ; turn on buffering
-  Declare.i flush()                 ; flush anything in buffer to terminal
+  Declare.i append_string(s.s)
   Declare.i write_string(s.s)
   Declare.i display_message(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
 
@@ -231,15 +229,50 @@ Module vt100
   UseModule errno
   UseModule termios
   UseModule common
-  UseModule bufwriter
 
   ; ----- Globals ---------------------------------------------------------------
-  ;
-  ; Buffer management and termios for mode switching.
 
-  Global.bcb      *bcb
   Global.tTERMIOS *original
   Global.tTERMIOS *raw
+  Global          *lcb
+
+  Procedure.i append_string(s.s)
+    ; to be provided
+  EndProcedure
+
+  ; ----- An immediate string write ---------------------------------------------
+  ;
+  ; Write the string to stdout as a byte sequence. Always returns #true.
+
+  Procedure.i _write_s_immediate(s.s)  ; write the string immediately
+    Define *m = AllocateMemory(Len(s) + 8)      ; meh, I always pad
+    string_to_buffer(s, *m)
+    fWRITE(1, *m, Len(s) + 2)
+    FreeMemory(*m)
+    ProcedureReturn #true
+  EndProcedure
+
+  ; ----- A possibly deferred string write --------------------------------------
+  ;
+  ; Write a string. If buffering is off, do a write immediate. If the buffer
+  ; would overflow, this is an error and returns a #false. Otherwise return
+  ; #true.
+
+  Procedure.i _write_s(s.s)              ; write a string to the buffer
+    ; If *bcb\buffering 
+    ;   With *bcb 
+    ;     If Len(s) + 1 + \bufused >= \bufsize 
+    ;       ProcedureReturn #false 
+    ;     EndIf 
+    ;     string_to_buffer(s, \nxt) 
+    ;     \nxt = \nxt + Len(s) 
+    ;     \bufused = \bufused + Len(s) 
+    ;   EndWith 
+    ;   ProcedureReturn #true 
+    ; Else 
+      ProcedureReturn _write_s_immediate(s)
+    ; EndIf 
+  EndProcedure
 
   ; ----- Command sequence prefix helpers. ------------------------------------
   ;
@@ -251,14 +284,14 @@ Module vt100
   ; terminal.
 
   Procedure.i _write_csi(s.s)
-    ProcedureReturn write_s(*bcb, Chr($1b) + "[" + s)
+    ProcedureReturn _write_s(Chr($1b) + "[" + s)
   EndProcedure
 
   ; Apply the ESC prefix to a parameter and command string and send it to the
   ; terminal.
 
   Procedure.i _write_esc(s.s)
-    ProcedureReturn write_s(*bcb, Chr($1b) + s)
+    ProcedureReturn _write_s(Chr($1b) + s)
   EndProcedure
 
   ; ----- Write a string to the terminal ----------------------------------------
@@ -268,7 +301,7 @@ Module vt100
   ; Returns whatever write_s returns
 
   Procedure.i write_string(s.s)
-    ProcedureReturn write_s(*bcb, s)
+    ProcedureReturn _write_s(s)
   EndProcedure
 
   ; ----- Terminal queries. ---------------------------------------------------
@@ -342,13 +375,13 @@ Module vt100
   ; Due to the nature of this command its output is in immediate mode.
 
   Procedure.i report_screen_dimensions(*p.tROWCOL)
-    immediate()
+    ;immediate()
     save_cursor
     _write_csi("999B") ; CUD cursor down this many
     _write_csi("999C") ; CUF cursor forward this many
     report_cursor_position(*p)
     restore_cursor
-    deferred()
+    ;deferred()
     ProcedureReturn #true
   EndProcedure
 
@@ -358,8 +391,6 @@ Module vt100
   ; message could be written to a log (from common.pbi).
   ;
   ; Always returns #true.
-  ;
-  ; Always flushes any buffered output.
 
   Procedure.i display_message(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
     save_cursor
@@ -367,7 +398,6 @@ Module vt100
     erase_line
     write_string(sev + ":" + msg)
     restore_cursor
-    buffer_flush(*bcb)
     ; todo: handle logging
     ProcedureReturn #true
   EndProcedure
@@ -447,7 +477,7 @@ Module vt100
   EndProcedure
 
   Procedure.i flush()
-    ProcedureReturn buffer_flush(*bcb)
+    ; ProcedureReturn buffer_flush(*bcb)
   EndProcedure
 
   ; ----- Spin up, spin down ----------------------------------------------------
@@ -456,9 +486,9 @@ Module vt100
   ; before issuing any other calls. Termination releases storage and returns
   ; the terminal to its original state.
 
-  Procedure.i initialize(bufsz.i=4096, raw.i=#true)
-    *bcb = buffer_initialize(bufsz)
-    *bcb\buffering = #false
+  Procedure.i initialize(raw.i=#true, logging.i=#true)
+    *lcb = logger::initialize("vt100.log", logging)
+    logger::prt(*lcb, "I", "VT100 Initialized")
     If raw
       *original = get_termios()
       *raw = set_raw_mode()
@@ -467,8 +497,6 @@ Module vt100
   EndProcedure
 
   Procedure.i terminate()
-    buffer_terminate(*bcb)
-    *bcb = 0
     If *raw
       set_termios(*original)
       FreeMemory(*raw)
@@ -476,6 +504,8 @@ Module vt100
       FreeMemory(*original)
       *original = 0
     EndIf
+    logger::prt(*lcb, "I", "VT100 Terminated")
+    logger::terminate(*lcb)
     ProcedureReturn #true
   EndProcedure
 

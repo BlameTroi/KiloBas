@@ -9,6 +9,8 @@
 EnableExplicit
 
 DeclareModule termios
+  EnableExplicit
+
   ; ----- Definitions from <sys/termios.h> --------------------------------------
   ;
   ; There are some preprocessor checks that appear to remove some of this. I am
@@ -237,21 +239,19 @@ EndModule
 
 ; ------- Expose tcgetattr and tcsetattr --------------------------------------
 
-UseModule termios
 If OpenLibrary(0, "libc.dylib")
-  fTCGETATTR = GetFunction(0, "tcgetattr")
-  fTCSETATTR = GetFunction(0, "tcsetattr")
+  termios::fTCGETATTR = GetFunction(0, "tcgetattr")
+  termios::fTCSETATTR = GetFunction(0, "tcsetattr")
 Else
   PrintN("Error on open library libc!")
   End
 Endif
-If fTCGETATTR = 0 OR fTCSETATTR = 0
+If termios::fTCGETATTR = 0 OR termios::fTCSETATTR = 0
   PrintN("Error retrieving one or more functions")
-  PrintN("fTCGETATTR = " + hex(fTCGETATTR))
-  PrintN("fTCSETATTR = " + hex(fTCSETATTR))
+  PrintN("fTCGETATTR = " + hex(termios::fTCGETATTR))
+  PrintN("fTCSETATTR = " + hex(termios::fTCSETATTR))
   End
 Endif
 CloseLibrary(0)
-UnuseModule termios
 
 ; termios.pbi ends here ------------------------------------------------------

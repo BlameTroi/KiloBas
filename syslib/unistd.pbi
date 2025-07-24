@@ -1,4 +1,4 @@
-; unistd.pbi -- everything from the MacOS unistd.h without the level checks.
+; unistd.pbi -- most of the macOS unistd.h but without feature checks.
 
 ; ----- Overview --------------------------------------------------------------
 ;
@@ -15,14 +15,16 @@
 EnableExplicit
 
 DeclareModule unistd
+  EnableExplicit
+
   ; ----- Standard file decriptors ---------------------------------------------
 
-  #STDIN_FILENO  = 0; standard input file descriptor
-  #STDIN         = 0
-  #STDOUT_FILENO = 1; standard output file descriptor
-  #STDOUT        = 1
-  #STDERR_FILENO = 2; standard error file descriptor
-  #STDERR        = 2
+  #STDIN_FILENO  = 0              ; standard input file descriptor
+  #STDIN         = 0              ; .. synonym
+  #STDOUT_FILENO = 1              ; standard output file descriptor
+  #STDOUT        = 1              ; .. synonym
+  #STDERR_FILENO = 2              ; standard error file descriptor
+  #STDERR        = 2              ; .. synonym
 
   ; ----- Type mapping C <-> PureBasic -----------------------------------------
   ;
@@ -72,7 +74,7 @@ DeclareModule unistd
   endstructure
 
   ; ----- needed parts of fcntl.h -------------------------------------------------
-
+  ;
   ; TODO: Pull in the needed parts from fcntl.h !!!!!!
   ; this may be better as a separate include.
 
@@ -82,7 +84,7 @@ DeclareModule unistd
   ; use. So far all I need is read() and write(). I've added a wrapper over
   ; write() to take a string, copy it to a byte buffer, and pass that buffer to
   ; write().
-
+  :
   ; Prototype.i _pCHDIR(D.s)
   ; Prototype.i _pCHOWN(D.s, uid.i, gid.i)
   ; Prototype.i _pOPEN(PATH.s, oflag.i)
@@ -143,21 +145,18 @@ EndModule
 
 ; ------- Expose read() and write() -------------------------------------------
 
-UseModule unistd
 If OpenLibrary(0, "libc.dylib")
-  fREAD = GetFunction(0, "read")
-  fWRITE = GetFunction(0, "write")
+  unistd::fREAD = GetFunction(0, "read")
+  unistd::fWRITE = GetFunction(0, "write")
 Else
   PrintN("Error on open library libc!")
   End
 Endif
-If fREAD = 0 OR fWRITE = 0
+If unistd::fREAD = 0 OR unistd::fWRITE = 0
   PrintN("Error retrieving one or more functions")
-  PrintN("fREAD = " + hex(fREAD))
-  PrintN("fWRITE = " + hex(fWRITE))
+  PrintN("fREAD = " + hex(unistd::fREAD))
+  PrintN("fWRITE = " + hex(unistd::fWRITE))
   End
 Endif
-CloseLibrary(0)
-UnuseModule unistd
 
 ; unistd.pbi ends here -------------------------------------------------------

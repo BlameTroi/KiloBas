@@ -18,6 +18,7 @@ EnableExplicit
 XIncludeFile "unistd.pbi"
 
 DeclareModule bufwriter
+  EnableExplicit
 
   ; ----- Our control block -----------------------------------------------------
   ;

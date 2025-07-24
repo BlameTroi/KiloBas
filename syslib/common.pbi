@@ -18,10 +18,13 @@
 ; * There are no thread safety checks.
 ;
 ; It is intended that this be both "IncludeFile"ed and "UseModule"ed.
+;
+; Add no external dependencies. NONE.
 
 EnableExplicit
 
 DeclareModule common
+  EnableExplicit
 
   ; ----- Key press and response mapping ----------------------------------------
   ;
@@ -203,8 +206,8 @@ Module common
       c = s
     EndIf
     If maxlen > 10
-      If Len(c) > length - 3
-        c = Left(c, length - 3) + "..."
+      If Len(c) > maxlen - 3
+        c = Left(c, maxlen - 3) + "..."
       EndIf
     EndIf
     ProcedureReturn "'" + c + "'"

@@ -1,15 +1,19 @@
-; errno.pbi -- everything from the MacOS errno.h without the level checks.
+; errno.pbi -- everything from the macOS errno.h without the level checks.
 
 ; ----- Overview --------------------------------------------------------------
 ;
 ; Those parts of <errno.h> that I might need. Some of these may be redundant
-; with PureBasic built in procedures, but I haven't found any so far.
+; with PureBasic built in procedures but I'm not too worried about that.
+;
+; This may work with a little modification on something other than macOS.
 ;
 ; It is intended that this be both "IncludeFile"ed and "UseModule"ed.
 
 EnableExplicit
 
 DeclareModule errno
+  EnableExplicit
+
   ; ----- Errors from <errno.h> as PureBasic constants --------------------------
 
   ; There are some preprocessor checks that appear to remove some of these.
@@ -188,20 +192,20 @@ Module errno
 EndModule
 
 ; ----- Expose perror ---------------------------------------------------------
+;
+; I wonder if fERRNO() will work if I can't find perror?
 
-UseModule errno
 If OpenLibrary(0, "libc.dylib")  
-  fPERROR = GetFunction(0, "perror")
+  errno::fPERROR = GetFunction(0, "perror")
 Else 
   PrintN("Error on open library libc! for perror") 
-  End fERRNO()
+  End errno::fERRNO()
 Endif 
 
-If fPERROR = 0
+If errno::fPERROR = 0
   PrintN("Error retrieving function perror from libc")
-  End fERRNO()
+  End errno::fERRNO()
 Endif
 CloseLibrary(0)
-UnuseModule errno
 
 ; errno.pbi ends here ---------------------------------------------------------

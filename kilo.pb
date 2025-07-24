@@ -97,6 +97,8 @@ EnableExplicit
 ; consistency. The only thing in the declaration is the mainline.
 
 DeclareModule kilo
+  EnableExplicit
+
   Declare Mainline()
 EndDeclareModule
 
@@ -521,7 +523,7 @@ Module kilo
     Editor_Cursor_Home()
     vt100::report_cursor_position(@E\cursor_position)
     vt100::display_message("I", "Welcome to kilo in PureBasic!", @E\message_area)
-    vt100::flush()
+    ; vt100::flush()
   EndProcedure
 
   ; Loop until the user requests we quit.
@@ -530,7 +532,7 @@ Module kilo
     Repeat
       Refresh_Screen()
     Until Process_Key()
-    vt100::immediate()
+    ; vt100::immediate()
   EndProcedure
 
   ; If the buffer is dirty ask if it should be written out. Do so if yes.
