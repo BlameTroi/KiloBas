@@ -28,7 +28,7 @@ DeclareModule bufwriter
 
   #BCB_DEFAULT = 4096     ; buffer size
   Structure bcb
-    bufsize.i            ; bytes allocated
+    bufsize.i             ; bytes allocated
     bufused.i             ; bytes used
     *buf                  ; the buffer
     *nxt                  ; next available in buffer

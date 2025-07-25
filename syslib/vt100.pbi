@@ -32,6 +32,9 @@
 ;
 ; It is intended that this module is only "IncldueFile"ed. The module name
 ; prefix 'vt100::' in client code identifies the calls as part of this API.
+;
+; In addition to immediate output several commands can be buffered. The
+; buffered versions are prefixed `append_`.
 
 EnableExplicit
 
@@ -46,6 +49,8 @@ XIncludeFile "logger.pbi"       ; logging
 DeclareModule vt100
   EnableExplicit
 
+  UseModule unistd
+  UseModule errno
   UseModule termios
   UseModule common
 
@@ -105,6 +110,10 @@ DeclareModule vt100
     vt100::_write_csi("2J")
   EndMacro
 
+  Macro append_erase_screen
+    vt100::_append_csi("2J")
+  EndMacro
+
   ; This is a CUP CUrsor Position (H). It takes the following parameters:
   ;
   ;  <NULL> Move cursor to home
@@ -121,10 +130,18 @@ DeclareModule vt100
     vt100::_write_csi("H")
   EndMacro
 
+  Macro append_cursor_home
+    vt100::_append_csi("H")
+  EndMacro
+
   ; Row and column should be integers.
 
   Macro cursor_position(row, col)
     vt100::_write_csi(Str(row) + ";" + Str(col) + "H")
+  EndMacro
+
+  Macro append_cursor_position(row, col)
+    vt100::_append_csi(Str(row) + ";" + Str(col) +"H")
   EndMacro
 
   ; These are DECSC and DECRC Save/Restore Cursor (7/8).
@@ -138,8 +155,16 @@ DeclareModule vt100
     vt100::_write_esc("7")
   EndMacro
 
+  Macro append_save_cursor
+    vt100::_append_esc("7")
+  EndMacro
+
   Macro restore_cursor
     vt100::_write_esc("8")
+  EndMacro
+
+  Macro append_restore_cursor
+    vt100::_append_esc("8")
   EndMacro
 
   ; This is an EL Erase in Line (K).
@@ -149,6 +174,10 @@ DeclareModule vt100
 
   Macro erase_line
     vt100::_write_csi("K") ; EL Erase in line from cursor to eol
+  EndMacro
+
+  Macro append_erase_line
+    vt100::_append_csi("K")
   EndMacro
 
   ; This is RIS Reset to Initial State (c).
@@ -185,8 +214,16 @@ DeclareModule vt100
     vt100::_write_csi("?25l")
   EndMacro
 
+  Macro append_cursor_hide
+    vt100::_append_csi("?25l")
+  EndMacro
+
   Macro cursor_show
     vt100::_write_csi("?25h")
+  EndMacro
+
+  Macro append_cursor_show
+    vt100::_append_csi("?25h")
   EndMacro
 
   ; ----- Expose the API --------------------------------------------------------
@@ -204,9 +241,17 @@ DeclareModule vt100
 
   ; Output procedures
 
-  Declare.i append_string(s.s)
   Declare.i write_string(s.s)
+  Declare.i append_string(s.s)
   Declare.i display_message(sev.s, msg.s, *pos.tROWCOL, log.i=#false)
+
+  ; Buffered output and buffer management
+
+  Declare.i append_buffer_initialize(bufsz.i=2048)
+  Declare.i append_buffer_grow()
+  Declare.i append_buffer_reset()
+  Declare.i append_buffer_write()
+  Declare.i append_buffer_terminate()
 
   ; Terminal queries. Report screen dimensions is a special case of report
   ; cursor position and does a bit of work before calling report cursor
@@ -219,59 +264,100 @@ DeclareModule vt100
   ; for use by macros. All client writes to the terminal should use write_string!
 
   Declare.i _write_csi(s.s)
+  Declare.i _append_csi(s.s)
   Declare.i _write_esc(s.s)
+  Declare.i _append_esc(s.s)
+  Declare.i _append_s(s.s)
+  Declare.i _write_s(s.s)
 
 EndDeclareModule
 
 Module vt100
 
-  UseModule unistd
-  UseModule errno
-  UseModule termios
-  UseModule common
-
   ; ----- Globals ---------------------------------------------------------------
 
-  Global.tTERMIOS *original
+  Global.tTERMIOS *original           ; 
   Global.tTERMIOS *raw
   Global          *lcb
 
-  Procedure.i append_string(s.s)
-    ; to be provided
+  ; The buffer:
+
+  Global.i buffering            ; Are we?
+  Global *buf                   ; allocated, can be realocated
+  Global *nxt                   ; next byte, probably don't need this
+  Global.i bufsize              ; maximum size
+  Global.i bufused              ; how deep in are we
+
+  Procedure.i append_buffer_initialize(bufsz.i=2048)
+    bufsize = bufsz
+    bufused = 0
+    *buf = AllocateMemory(bufsize)
+    *nxt = *buf
+    buffering = #true
+    logger::prt(*lcb, "I", "Buffering initialized")
+  EndProcedure
+
+  Procedure.i append_buffer_grow()
+    logger::prt(*lcb, "I", "Buffer resized")
+    *buf = ReAllocateMemory(*buf, bufsize + bufsize)
+    *nxt = *buf + bufused
+    bufsize = bufsize + bufsize
+  EndProcedure
+
+  Procedure.i append_buffer_reset()
+    logger::prt(*lcb, "I", "Buffer reset")
+    FillMemory(*buf, bufused, 0, #PB_Ascii)
+    *nxt = *buf
+    bufused = 0
+  EndProcedure
+
+  Procedure.i append_buffer_write()
+    logger::prt(*lcb, "I", "Buffer written")
+    fWRITE(1, *buf, bufused)
+  EndProcedure
+
+  Procedure.i append_buffer_terminate()
+    buffering = #false
+    logger::prt(*lcb, "I", "Buffering terminated")
+    FreeMemory(*buf)
+    *buf = 0
+    *nxt = 0
+    bufsize = 0
+    bufused = 0
+  EndProcedure
+
+  ; apppend_ save_cursor reset_buffer cursor_position erase_line string restore_cursor
+  ; write_buffer
+
+  ; Copy a string to the next available position in the buffer. TODO: overflow check
+  ; and dynamically grow buffer.
+  Procedure.i _append_s(s.s)
+    If buffering
+      Define *ptr = *nxt
+      Define.i i
+      For i = 1 To Len(s)
+        PokeA(*ptr, Asc(Mid(s, i, 1)))
+        *ptr = *ptr + 1
+      Next i
+      PokeA(*ptr, 0) ; this is not strictly needed
+      *nxt = *ptr
+      bufused = *nxt - *buf
+      ProcedureReturn #true
+    Else
+      ProcedureReturn _write_s(s)
+    EndIf
   EndProcedure
 
   ; ----- An immediate string write ---------------------------------------------
   ;
   ; Write the string to stdout as a byte sequence. Always returns #true.
 
-  Procedure.i _write_s_immediate(s.s)  ; write the string immediately
+  Procedure.i _write_s(s.s)                     ; write the string immediately
     Define *m = AllocateMemory(Len(s) + 8)      ; meh, I always pad
     string_to_buffer(s, *m)
     fWRITE(1, *m, Len(s) + 2)
     FreeMemory(*m)
     ProcedureReturn #true
-  EndProcedure
-
-  ; ----- A possibly deferred string write --------------------------------------
-  ;
-  ; Write a string. If buffering is off, do a write immediate. If the buffer
-  ; would overflow, this is an error and returns a #false. Otherwise return
-  ; #true.
-
-  Procedure.i _write_s(s.s)              ; write a string to the buffer
-    ; If *bcb\buffering 
-    ;   With *bcb 
-    ;     If Len(s) + 1 + \bufused >= \bufsize 
-    ;       ProcedureReturn #false 
-    ;     EndIf 
-    ;     string_to_buffer(s, \nxt) 
-    ;     \nxt = \nxt + Len(s) 
-    ;     \bufused = \bufused + Len(s) 
-    ;   EndWith 
-    ;   ProcedureReturn #true 
-    ; Else 
-      ProcedureReturn _write_s_immediate(s)
-    ; EndIf 
   EndProcedure
 
   ; ----- Command sequence prefix helpers. ------------------------------------
@@ -287,11 +373,19 @@ Module vt100
     ProcedureReturn _write_s(Chr($1b) + "[" + s)
   EndProcedure
 
+  Procedure.i _append_csi(s.s)
+    ProcedureReturn _append_s(Chr($1b) + "[" + s)
+  EndProcedure
+
   ; Apply the ESC prefix to a parameter and command string and send it to the
   ; terminal.
 
   Procedure.i _write_esc(s.s)
     ProcedureReturn _write_s(Chr($1b) + s)
+  EndProcedure
+
+  Procedure.i _append_esc(s.s)
+      ProcedureReturn _append_s(Chr($1b) + s)
   EndProcedure
 
   ; ----- Write a string to the terminal ----------------------------------------
@@ -302,6 +396,10 @@ Module vt100
 
   Procedure.i write_string(s.s)
     ProcedureReturn _write_s(s)
+  EndProcedure
+
+  Procedure.i append_string(s.s)
+    ProcedureReturn _append_s(s)
   EndProcedure
 
   ; ----- Terminal queries. ---------------------------------------------------
@@ -375,13 +473,11 @@ Module vt100
   ; Due to the nature of this command its output is in immediate mode.
 
   Procedure.i report_screen_dimensions(*p.tROWCOL)
-    ;immediate()
     save_cursor
     _write_csi("999B") ; CUD cursor down this many
     _write_csi("999C") ; CUF cursor forward this many
     report_cursor_position(*p)
     restore_cursor
-    ;deferred()
     ProcedureReturn #true
   EndProcedure
 
@@ -468,18 +564,6 @@ Module vt100
   ; Actual terminal writes (buffered or not) are issued directly above in the
   ; vt100 code. Reads are done via read() in unistd.
 
-  Procedure.i immediate()
-    ; ProcedureReturn buffer_off(*bcb)
-  EndProcedure
-
-  Procedure.i deferred()
-    ; ProcedureReturn buffer_on(*bcb)
-  EndProcedure
-
-  Procedure.i flush()
-    ; ProcedureReturn buffer_flush(*bcb)
-  EndProcedure
-
   ; ----- Spin up, spin down ----------------------------------------------------
   ;
   ; Initialization of both buffering and the terminal io state should be done
@@ -489,6 +573,7 @@ Module vt100
   Procedure.i initialize(raw.i=#true, logging.i=#true)
     *lcb = logger::initialize("vt100.log", logging)
     logger::prt(*lcb, "I", "VT100 Initialized")
+    append_buffer_initialize(8192) ;; should never overflow
     If raw
       *original = get_termios()
       *raw = set_raw_mode()

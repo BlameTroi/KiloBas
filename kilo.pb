@@ -222,9 +222,13 @@ Module kilo
   ; the editable area. That may be changed to command entry area a la XEdit,
   ; but I haven't decided yet.
 
-  Procedure.i Editor_Cursor_Home()
+  Procedure.i Editor_Cursor_Home(buffering=#false)
     With E\top_left
-      vt100::cursor_position(\row, \col)
+      If buffering
+        vt100::append_cursor_position(\row, \col)
+      Else
+        vt100::cursor_position(\row, \col)
+      EndIf
     EndWith
   EndProcedure
 
@@ -232,18 +236,26 @@ Module kilo
   ;
   ; Refresh the editable area while preserving the user's cursor position.
   ; Empty rows will have the conventional Vi tilde (~) on the left margin. 
+  ;
+  ; I was unable to come up with behind-the-scenes buffering approach that
+  ; worked well. I decided to go with an explicit "build a buffer and write it"
+  ; approach which is similar to that of the Kilo tutorial, but I've put
+  ; everything behind my mnemonic wrappers.
 
   Procedure.i Draw_Rows()
-    vt100::save_cursor
-    Editor_Cursor_Home()
+    vt100::append_buffer_reset()
+    vt100::append_save_cursor
+    Editor_Cursor_Home(#true)
     Define.i row
     For row = E\top_left\row To E\bottom_right\row
-      vt100::cursor_position(row, E\top_left\col)
-      vt100::erase_line
+      vt100::append_cursor_position(row, E\top_left\col)
+      vt100::append_erase_line
       ; TODO: should this clip to the region?
-      vt100::write_string(~"~")
+      vt100::append_string(~"~")
     Next row
-    vt100::restore_cursor
+    vt100::append_restore_cursor
+    vt100::append_buffer_write()
+    vt100::append_buffer_reset()
   EndProcedure
 
   ; Procedure.i Draw_Frame() <- to be provided
